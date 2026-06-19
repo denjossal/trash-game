@@ -11,7 +11,7 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@trash/shared": "*",
+    "@trash/shared": "0.0.0",
     "partyserver": "0.5.8"
   },
   "devDependencies": {

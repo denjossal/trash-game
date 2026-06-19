@@ -6,6 +6,12 @@
 //
 // vitest-pool-workers v4 wires the Workers runtime via the cloudflareTest() PLUGIN
 // (the v3 defineWorkersProject/poolOptions API was removed).
+//
+// TEST-FILE NAMING CONVENTION (enforced by convention, not code — code review 2026-06-19):
+//   The partition is exhaustive ONLY for the `*.test.ts` / `*.do.test.ts` suffixes.
+//   A file named e.g. `foo.spec.ts` or `foo.workers.ts` matches NEITHER project's `include`
+//   and would run in NO project (green CI, zero coverage). Always name tests `*.test.ts`
+//   (node) or `*.do.test.ts` (Workers runtime). No other test suffix is recognized.
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
