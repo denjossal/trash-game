@@ -1,0 +1,23 @@
+{
+  "name": "@trash/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@trash/shared": "*",
+    "partyserver": "0.5.8"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.16.18",
+    "@cloudflare/workers-types": "4.20260619.1",
+    "vitest": "4.1.9",
+    "wrangler": "4.103.0"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "trash-game",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Trash — a private-by-default, zero-cost, server-authoritative party card game on Cloudflare Workers + Durable Objects.",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=server & npm run dev --workspace=client",
+    "test": "npm run test --workspace=server",
+    "lint": "eslint .",
+    "typecheck": "tsc -b shared server && npm run typecheck --workspace=client",
+    "build": "npm run build --workspace=client"
+  },
+  "devDependencies": {
+    "eslint": "9.39.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.4"
+  }
+}

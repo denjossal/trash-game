@@ -1,0 +1,2 @@
+# Local env sample for `wrangler dev`. No secrets are needed in MVP.
+# Copy to .dev.vars (gitignored) if/when a local-only var is introduced.

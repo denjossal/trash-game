@@ -1,0 +1,4 @@
+# server/src/rules/ — the PURE rule engine (Story 2.1+).
+# Imports ONLY @trash/shared. No transport/storage/crypto/Date/Math.random/this./console.
+# Enforced by the ESLint purity denylist + import restriction (eslint.config.js).
+# engine.ts, validate.ts, and *.test.ts land here in Epic 2/3.

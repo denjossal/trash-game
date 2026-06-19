@@ -1,0 +1,102 @@
+# generated: 2026-06-19
+# last_updated: 2026-06-19
+# project: trash-game
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+#
+# PROJECT NOTES (trash-game):
+# ===========================
+# - Epic 0 (Standing Gates G1/G2) are pass/fail properties-of-the-whole, NOT feature work.
+#   They have no retrospective; they are enforced for the life of the project.
+# - Story 1.1 is a GATE-AND-STOP spike (go/no-go) — it must pass before Story 1.2 begins.
+# - Open product decision M1 (hostSetLives clamp-vs-top-up) due before Epic 4 / Story 4-2.
+
+generated: 2026-06-19
+last_updated: 2026-06-19
+project: trash-game
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # --- Epic 0: Standing Gates (properties of the whole; no retrospective) ---
+  epic-0: backlog
+  g1-eyes-up-no-attention-sink-standing-gate: backlog
+  g2-zero-cost-no-paid-dependency-standing-gate: backlog
+
+  # --- Epic 1: Get to a Table together ---
+  epic-1: in-progress
+  1-1-pre-build-spike-go-no-go-on-the-durable-object-premise: review
+  1-2-ac-driven-project-initialization: review
+  1-3-shared-wire-contract-full-state-shape-up-front: backlog
+  1-4-privacy-chokepoint-standing-sm6-negative-assertion-test: backlog
+  1-5-player-identity-and-session: backlog
+  1-6-create-a-table-and-get-a-room-code: backlog
+  1-7-join-a-table-and-see-a-live-multi-device-roster: backlog
+  1-8-host-sets-starting-lives: backlog
+  1-9a-design-token-foundation-and-render-from-state-router: backlog
+  1-9b-pwa-shell-voice-primitives-and-interaction-safety: backlog
+  1-10-home-and-lobby-surfaces: backlog
+  1-11-room-garbage-collection-zero-cost-backstop: backlog
+  epic-1-retrospective: optional
+
+  # --- Epic 2: Play a Round ---
+  epic-2: backlog
+  2-1-deck-build-and-seeded-shuffle-pure-parameterized: backlog
+  2-2-two-scope-monotonic-guard-built-whole: backlog
+  2-3-deal-secret-cards-and-simultaneous-dealt-state: backlog
+  2-4-take-a-turn-swap-or-keep-the-two-button-hero: backlog
+  2-5-peek-your-own-card: backlog
+  2-6-last-player-option-swap-or-draw-from-the-deck: backlog
+  epic-2-retrospective: optional
+
+  # --- Epic 3: The Showdown ---
+  epic-3: backlog
+  3-1-showdown-resolution-engine-pure-parameterized-2-20: backlog
+  3-2-trigger-showdown-with-reveal-finality: backlog
+  3-3-showdown-surface-the-safe-flip-and-loser-highlight: backlog
+  3-4-round-result-lives-and-one-tap-re-deal: backlog
+  3-5-eliminated-spectator-not-a-dead-end-play-confirmed-bet: backlog
+  3-6-winner-end-the-game-warmly: backlog
+  epic-3-retrospective: optional
+
+  # --- Epic 4: Conduct the night ---
+  epic-4: backlog
+  4-1-conductor-bar-and-host-controls-overlay-off-the-turn-path: backlog
+  4-2-host-mid-session-controls-lives-remove-reassign-play-confirmed-bet: backlog
+  epic-4-retrospective: optional
+
+  # --- Epic 5: Scale to the whole table ---
+  epic-5: backlog
+  5-1-auto-deck-scaling-to-two-merged-decks-at-11-20: backlog
+  epic-5-retrospective: optional

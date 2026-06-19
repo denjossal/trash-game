@@ -1,0 +1,4 @@
+# server/test/integration/ — connection-lifecycle / hibernation tests run against
+# `wrangler dev` (the @cloudflare/vitest-pool-workers project CANNOT drive a real WS
+# upgrade + hibernation roundtrip). [Source: architecture.md#Testing, #AR-14]
+# Populated in Story 1.7 (multi-device concurrent join) and Story 1.11 (GC alarm).

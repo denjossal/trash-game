@@ -1,0 +1,26 @@
+# Throwaway pre-build spike (Story 1.1) — must NOT become product code.
+# The real repo is scaffolded fresh in Story 1.2. Only the findings doc is durable.
+/spike/
+
+# OS / editor cruft
+.DS_Store
+
+# Node
+node_modules/
+
+# Build output
+dist/
+client/dev-dist/
+.svelte-kit/
+
+# Wrangler / local env
+.wrangler/
+.dev.vars
+
+# TS build info
+*.tsbuildinfo
+
+# BMad tooling — local dev workflow, not part of the project source.
+# (Planning + implementation artifacts under _bmad-output/ ARE tracked.)
+/.claude/
+/_bmad/

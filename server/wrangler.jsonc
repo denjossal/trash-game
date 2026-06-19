@@ -1,0 +1,25 @@
+{
+  // @trash/server — the Cloudflare Worker hosting one Durable Object per Table.
+  // [Source: architecture.md#Init-Story-Acceptance-Criteria 1–6; #Complete-Project-Directory-Structure]
+  "name": "trash-game",
+  "main": "src/index.ts",
+  // Init AC4: pinned recent compatibility_date supporting SQLite-in-DO + WS hibernation.
+  // Re-verify recent enough at run time; bump if wrangler warns.
+  "compatibility_date": "2026-06-01",
+  "durable_objects": {
+    "bindings": [
+      // Init AC3: binding name "Table" <-> class_name "TableServer" <-> exported symbol all match.
+      { "name": "Table", "class_name": "TableServer" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      // Init AC1-2 (CRITICAL): new_sqlite_classes, NOT new_classes. The SQLite storage
+      // backend is the free-tier requirement (G2). Migration tags are append-only/immutable,
+      // so this must be correct in commit one — a later "fix" can't rewrite v1.
+      "new_sqlite_classes": ["TableServer"]
+    }
+  ],
+  "observability": { "enabled": true }
+}
