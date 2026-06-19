@@ -1,5 +1,11 @@
 # Deferred Work
 
+## Deferred from: code review of 1-3-shared-wire-contract (2026-06-19)
+
+- **`Card.rank` and Intent numeric/string fields unconstrained at the type level** [shared/src/types.ts] — `rank: number` (not `1..13`), `hostSetLives.lives: number` (not MIN/MAX_LIVES), tokens/`code` unbounded. By design: the contract is type-only (no zod/valibot in the stack); range/integer/token/alphabet validation is owned by Epic 2 `server/src/rules/validate.ts`. Risk if forgotten there: out-of-range client input reaches state silently. Every numeric/string Intent field is a validation obligation for Epic 2.
+- **`ProjectedTableState` privacy + self-consistency not type-enforced** [shared/src/types.ts] — `players[].hand?` permits an opponent's card on the wire; `you` vs the matching `players[]` entry are two sources of truth for the local player with no type linkage. Enforced instead by `projectStateFor` + the SM-6 negative-assertion test, both **Story 1.4**. Clarify in 1.4: in `players[]`, omit `hand` for ALL seats (incl. self) until `revealed`; self's card lives only in `you.hand`.
+- **`ErrorReason` has no `internal`/`not-implemented` code; non-IntentError throws have no wire representation** [shared/src/types.ts; server/src/project-state.ts] — `projectStateFor` currently throws a raw `Error` (unreachable until 1.4). When real paths exist, Epic 2's dispatch catch must distinguish `instanceof IntentError` (→ `error` event) from unexpected throws (no `ErrorReason` fits — log + generic close). Decide whether to add an `internal` code to the union at that point.
+
 ## Deferred from: code review of 1-1-pre-build-spike (2026-06-19)
 
 > Source story is a THROWAWAY spike. None of these require touching the (about-to-be-deleted) spike code; they are carried as known limitations / downstream follow-ups. The GO decision stands.
