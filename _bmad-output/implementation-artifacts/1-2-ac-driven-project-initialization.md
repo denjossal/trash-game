@@ -4,7 +4,7 @@ baseline_commit: NO_VCS
 
 # Story 1.2: AC-driven project initialization
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -98,6 +98,29 @@ And removing the planted violations returns lint to green.
 - [x] [Review][Patch] Dynamic `import()` bypassed the `rules/**` import restriction [eslint.config.js] — FIXED: banned `ImportExpression` in rules/**.
 - [x] [Review][Patch] partyserver kebab-cases the binding → URL namespace is `/parties/table/` (lowercase); comment omitted this (downstream 404 risk) [server/src/index.ts] — FIXED: comment added.
 - [x] [Review][Defer] Client `tsc -b` permanently "out of date" (noEmit + non-composite defeats incremental rebuild) [client/tsconfig.json] — deferred, cosmetic; functionally typechecks fine. Revisit if client build time becomes a problem.
+
+### Review Findings (2026-06-19, round 2 — full-commit adversarial review)
+
+> Second adversarial review (Blind Hunter / Edge Case Hunter / Acceptance Auditor) against the full initial commit. All 3 ACs re-confirmed MET; the round-1 patches all verified genuinely present. New findings are all about the *reach* of the mechanical gates — load-bearing bypasses were empirically probed (lint run against planted violations) before classification, and 6 plausible-sounding bypass claims were dismissed as false positives (computed `conn["send"]()`, optional-chain `conn?.send()`, `Date["now"]()` — all CAUGHT by probe).
+
+**Decision-needed (both resolved → deferred):**
+- [x] [Review][Decision→Defer] Root `npm test` only runs the `server` workspace — `client`/`shared` have no test gate. RESOLVED: deliberate for now — client/shared are stubs (per the 1.3 scope boundary) with nothing meaningful to test. Broaden the root `test` script when client/shared get real logic (1.3+). [package.json]
+- [x] [Review][Decision→Defer] The `.send`/`.broadcast` egress ban is scoped to `**/*.ts` only; `.svelte`/`.js` are unguarded. RESOLVED: server-only is correct by design — SM-6 is the SERVER's single send site (`push-state.ts`); the client legitimately calls `socket.send(intent)`, so a client-side ban would be wrong. Action: document the scope intent in the gate comment (deferred, low priority). [eslint.config.js]
+
+**Patch (probe-confirmed real) — ALL APPLIED + re-verified green-on-clean, red-on-violation:**
+- [x] [Review][Patch] `rules/**` purity bypassable via computed/aliased global access — `Math["random"]()` (aliased binding) and `globalThis["Date"]` evaded the selectors. FIXED [eslint.config.js]: added two computed-`MemberExpression` bans (restricted-global names + clock/RNG method names) keyed on `property.value`. Re-proof: `const m = Math; m["random"]()` now flagged; legitimate `cfg["foo"]` data access untouched.
+- [x] [Review][Patch] `rules/**` import allowlist permitted `../` escapes — `import from "../persistence.js"` (an impure server sibling) was allowed by `\.{1,2}/`. FIXED [eslint.config.js]: tightened regex to `^(?!@trash/shared(/.*)?$|\./).*` — allows `@trash/shared` + same-tree `./` only, bans `../`. Re-proof: `../persistence.js` now flagged; `@trash/shared` + `./` still allowed.
+- [x] [Review][Patch→Defer] Vitest partition silently drops any test file not ending `.test.ts`/`.do.test.ts`. RESOLVED as a documented convention rather than guard machinery — the partition is exhaustive for the repo's only test suffix; the "hole" requires inventing a non-conventional filename. Added a TEST-FILE NAMING CONVENTION comment to `server/vitest.config.ts` warning that no other suffix is recognized.
+- [x] [Review][Patch] `@trash/shared: "*"` was the weakest constraint. FIXED [server/package.json, client/package.json]: pinned to `"0.0.0"` (matches the workspace version). NOTE: the reviewers suggested `workspace:*`, but this repo uses **npm 11** workspaces and npm does NOT support the `workspace:` protocol (pnpm/yarn/bun only) — `workspace:*` would break `npm install`. The `0.0.0` pin resolves to the local symlink and rejects a registry package of a different version. Re-verified: `npm install --dry-run` exit 0, `@trash/shared` still links locally.
+
+**Deferred (real, not actionable now):**
+- [x] [Review][Defer] partyserver kebab-cases the binding → `/parties/table/<name>` routing is comment-only and untested; `scaffold.do.test.ts` uses `env.Table` directly, bypassing routing, so a client hitting `/parties/Table/...` would 404 with the gate green. Routing assertion belongs in the Story 1.7 integration tests. [server/src/index.ts]
+- [x] [Review][Defer] `rules/**` purity does not ban scheduling/ambient non-determinism globals (`setTimeout`, `queueMicrotask`, `setInterval`, `Intl`, `WeakRef`, `FinalizationRegistry`); the denylist is a fixed enumerated set. Extend when the engine (Epic 2) actually needs guarding. [eslint.config.js]
+- [x] [Review][Defer] `compatibility_date`/version-pin freshness is comment-only ("re-verify at run time") with no automated assertion — relies on a human reading the comment at deploy. [server/wrangler.jsonc]
+- [x] [Review][Defer] No `engines` field; the Node floor for vite 8 / vitest 4 / wrangler 4.103 is unenforced locally (CI pins Node 22), so a contributor on an older Node hits a different failure than CI. [package.json]
+- [x] [Review][Defer] `.ts`-as-package-entry (`shared` `main`/`exports` → `./src/index.ts`) works only under bundler/dev resolution; a node-native consumer would fail to load `.ts`. Acceptable for an internal monorepo; landmine only if anything ever does node-native resolution. [shared/package.json]
+
+> Dismissed as noise (6): computed `conn["send"]()` ban-evasion (probe: CAUGHT), optional-chain `conn?.send()` (probe: CAUGHT), `Date["now"]()` (caught by blanket `Date` identifier ban), purity identifier-bans firing on type positions (intentional per spec "denylist tokens"), redundant `globalThis.Date.now` selector (redundant ≠ defect), and the client `tsc -b` incremental-cache item (already deferred in round 1).
 
 ## Dev Notes
 

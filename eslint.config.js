@@ -39,6 +39,12 @@ const rulesPurityBans = [
   // Dynamic import escapes no-restricted-imports (which only governs static imports), so ban the
   // expression form outright. Static-import purity is enforced by the no-restricted-imports rule below.
   { selector: "ImportExpression", message: "rules/** is PURE — no dynamic import() (static @trash/shared + relative only)." },
+  // Computed member access closes the alias / `globalThis["X"]` / `Math["random"]()` bypass that
+  // the identifier+dotted-member selectors above miss (a string-literal property is not an Identifier
+  // named Date/Math, and an aliased binding `const m = Math; m["random"]()` has no `Math` token).
+  // Property-name match only — legitimate data access like `cfg["foo"]` is untouched.
+  { selector: "MemberExpression[computed=true][property.value=/^(Date|Math|crypto|fetch|storage|ws|caches|console|performance)$/]", message: "rules/** is PURE — no computed access to restricted globals (e.g. globalThis['Date'])." },
+  { selector: "MemberExpression[computed=true][property.value=/^(random|now|getRandomValues|randomUUID)$/]", message: "rules/** is PURE — no computed access to clock/RNG methods (e.g. Math['random'], aliased Date['now'])." },
 ];
 
 export default tseslint.config(
@@ -73,15 +79,18 @@ export default tseslint.config(
     files: ["server/src/rules/**/*.ts"],
     rules: {
       "no-restricted-syntax": rulesPurityBans,
-      // Allowlist via regex: @trash/shared (and its subpaths) + relative imports only; ban all else.
+      // Allowlist via regex: @trash/shared (and its subpaths) + SAME-TREE `./` imports only; ban all else.
       // `allow` is the inverse-match list; anything NOT matching is reported.
+      // NOTE: `../` is banned (was `\\.{1,2}/`) — every parent of rules/ is an impure server module
+      //   (persistence.ts, identity.ts, …), so a `../sibling` import would launder impurity into the
+      //   pure graph past the per-file syntax bans. Intra-engine files live flat in rules/ (reach via ./).
       "no-restricted-imports": [
         "error",
         {
           patterns: [
             {
-              regex: "^(?!@trash/shared(/.*)?$|\\.{1,2}/).*",
-              message: "rules/** may import ONLY @trash/shared or relative paths (purity boundary).",
+              regex: "^(?!@trash/shared(/.*)?$|\\./).*",
+              message: "rules/** may import ONLY @trash/shared or same-tree ./ paths (purity boundary — no ../ escapes).",
             },
           ],
         },

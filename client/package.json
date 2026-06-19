@@ -10,7 +10,7 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json && tsc -b"
   },
   "dependencies": {
-    "@trash/shared": "*",
+    "@trash/shared": "0.0.0",
     "partysocket": "1.2.0",
     "svelte": "5.56.3"
   },

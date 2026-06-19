@@ -1,5 +1,6 @@
 # generated: 2026-06-19
 # last_updated: 2026-06-19
+# (1-4 → review 2026-06-19; → done 2026-06-19 code-review)
 # project: trash-game
 # project_key: NOKEY
 # tracking_system: file-system
@@ -57,9 +58,9 @@ development_status:
   # --- Epic 1: Get to a Table together ---
   epic-1: in-progress
   1-1-pre-build-spike-go-no-go-on-the-durable-object-premise: review
-  1-2-ac-driven-project-initialization: review
-  1-3-shared-wire-contract-full-state-shape-up-front: backlog
-  1-4-privacy-chokepoint-standing-sm6-negative-assertion-test: backlog
+  1-2-ac-driven-project-initialization: done
+  1-3-shared-wire-contract-full-state-shape-up-front: done
+  1-4-privacy-chokepoint-standing-sm6-negative-assertion-test: done
   1-5-player-identity-and-session: backlog
   1-6-create-a-table-and-get-a-room-code: backlog
   1-7-join-a-table-and-see-a-live-multi-device-roster: backlog
