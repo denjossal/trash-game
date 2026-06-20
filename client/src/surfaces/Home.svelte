@@ -2,11 +2,14 @@
   // SCOPE (Story 1.9a): foundation STUB. Routed when no tableState exists yet (cold open / pre-join).
   // The real Home — "Start a table" / "Join a table" + Room Code field — is Story 1.10 (UX-DR3),
   // which also wires socket.ts create/join into this surface.
+  // Story 1.9b: the visible strings now come from the shared voice module (copy.ts), the single
+  // source of truth for microcopy/tone (UX-DR16).
+  import { APP_NAME, CONNECTING } from "../lib/copy";
 </script>
 
 <main class="surface">
-  <h1>Trash</h1>
-  <p>Connecting…</p>
+  <h1>{APP_NAME}</h1>
+  <p>{CONNECTING}</p>
 </main>
 
 <style>
