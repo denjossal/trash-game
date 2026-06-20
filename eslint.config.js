@@ -1,6 +1,13 @@
 // ESLint mechanical gates (AR-13) — CI gates, not review. Two path-scoped rules:
 //   1. .send / .broadcast banned everywhere EXCEPT server/src/push-state.ts (the SM-6 egress
-//      chokepoint's single send site).
+//      chokepoint's single SERVER→CLIENT game-state send site).
+//      Story 1.6 refinement: the ban's REAL target is SERVER game-state egress. Two sites that are
+//      NOT server egress are exempted for `.send` ONLY (`.broadcast` stays banned for them):
+//        - client/src/socket.ts — the CLIENT's outbound INTENT send (client→server, the opposite
+//          direction; carries no game state, cannot leak a secret). Anticipated + deferred by Story 1.5.
+//        - server/src/**/*.do.test.ts — the pool-workers test harness drives a CLIENT WebSocket
+//          (`ws.send(intent)`) to exercise the round-trip; also client→server, not server egress.
+//      push-state.ts remains the ONLY place SERVER game state is sent to a client — SM-6 intact.
 //   2. server/src/rules/** is PURE: no clock/RNG/crypto/fetch/storage/ws/this/console/caches,
 //      no dynamic import, and may import (statically OR dynamically) ONLY @trash/shared + relative.
 // Proven red-first in Story 1.2 (plant a violation -> lint fails -> remove -> green).
@@ -10,6 +17,14 @@ import tseslint from "typescript-eslint";
 const sendBroadcastBan = [
   "error",
   { property: "send", message: "Only server/src/push-state.ts may call .send (SM-6 egress chokepoint, AR-4)." },
+  { property: "broadcast", message: "Only server/src/push-state.ts may call .broadcast (SM-6 egress chokepoint, AR-4)." },
+];
+
+// GATE 1 partial relaxation for non-egress `.send` sites (client outbound intents + test WS harness).
+// `.broadcast` stays banned here — only push-state.ts may broadcast. Keeps the SM-6 server-egress
+// chokepoint intact while permitting the client→server direction that createRoom/joinRoom require.
+const broadcastOnlyBan = [
+  "error",
   { property: "broadcast", message: "Only server/src/push-state.ts may call .broadcast (SM-6 egress chokepoint, AR-4)." },
 ];
 
@@ -68,10 +83,18 @@ export default tseslint.config(
     rules: { "no-restricted-properties": sendBroadcastBan },
   },
 
-  // GATE 1 exception — the ONE allowed send site.
+  // GATE 1 exception — the ONE allowed SERVER→CLIENT game-state send site.
   {
     files: ["server/src/push-state.ts"],
     rules: { "no-restricted-properties": "off" },
+  },
+
+  // GATE 1 partial relaxation — non-egress `.send` sites (client→server intents + test WS harness).
+  // `.send` allowed (these carry no server-side game state); `.broadcast` STILL banned. SM-6's
+  // server-egress chokepoint (push-state.ts) is unaffected. [Story 1.6 — createRoom outbound intent.]
+  {
+    files: ["client/src/socket.ts", "server/src/**/*.do.test.ts"],
+    rules: { "no-restricted-properties": broadcastOnlyBan },
   },
 
   // GATE 2 — purity of the rule engine.
