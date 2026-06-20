@@ -2,15 +2,22 @@
   // SCOPE (Story 1.9a): foundation STUB. Routed when you are out of Lives (spectator) or the game is
   // over and you are not the winner. The real Eliminated — "You're out — stick around and heckle",
   // still seeing Waiting/Showdown — is a play-confirmed bet in Epic 3 (3.5, Decision #6).
+  // Story 1.9b: the visible copy now comes from the shared voice module (copy.ts), the single
+  // source of truth for microcopy/tone (UX-DR16). The voice-table line is one sentence
+  // ("You're out — stick around and heckle."); we keep the stub's heading/subline visual split by
+  // splitting that single source string on its em-dash, so the string stays the source of truth.
   import type { ProjectedTableState } from "@trash/shared";
+  import { ELIMINATED } from "../lib/copy";
   const { state }: { state: ProjectedTableState } = $props();
   // svelte-ignore state_referenced_locally
   void state;
+
+  const [lead, tail] = ELIMINATED.split(" — ");
 </script>
 
 <main class="surface">
-  <h1>You’re out.</h1>
-  <p>Stick around and heckle.</p>
+  <h1>{lead}.</h1>
+  <p>{tail}</p>
 </main>
 
 <style>

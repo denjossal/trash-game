@@ -1,18 +1,43 @@
-// Client vitest — node-env project for PURE client functions (Story 1.9a: the render-from-state
-// router). The router is a pure (ProjectedTableState | null) -> Surface function, so it needs no DOM
-// and no Workers runtime — plain node env, mirroring the server's "rules" project (AR-14).
+// Client vitest — TWO projects (Story 1.9b):
 //
-// Svelte component testing is intentionally NOT set up here (no surface needs it yet — the surfaces
-// are render-from-state stubs in 1.9a; the routing CORRECTNESS lives in the extracted pure function).
-// Add a jsdom/@testing-library project later if a surface grows logic worth mounting.
+//  1. "client-node"  — node env for PURE client functions (Story 1.9a: the render-from-state router,
+//                       a pure (ProjectedTableState | null) -> Surface function — no DOM, no Workers).
+//                       Matches `src/**/*.test.ts` but EXCLUDES the `*.svelte.test.ts` component tests.
+//  2. "client-dom"   — jsdom env for COMPONENT tests that must mount Svelte (Story 1.9b: the Button
+//                       primitive — debounce is the first genuine client logic worth mounting, exactly
+//                       the "surface grows logic worth mounting" case the 1.9a config anticipated).
+//                       Matches `src/**/*.svelte.test.ts` only.
 //
-// TEST-FILE NAMING: `*.test.ts` only (same convention as server/vitest.config.ts).
+// Both run under `npm test --workspace=client` (vitest runs all projects). Keeping them separate
+// keeps the fast pure-function tests out of the heavier jsdom env, and mirrors the server's
+// two-project split (rules:node + do:pool-workers, AR-14).
+//
+// TEST-FILE NAMING: pure ->`*.test.ts`; component -> `*.svelte.test.ts`.
+import { svelteTesting } from "@testing-library/svelte/vite";
+import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    name: "client",
-    environment: "node",
-    include: ["src/**/*.test.ts"],
+    projects: [
+      {
+        test: {
+          name: "client-node",
+          environment: "node",
+          include: ["src/**/*.test.ts"],
+          exclude: ["src/**/*.svelte.test.ts"],
+        },
+      },
+      {
+        // The svelte plugin compiles .svelte components; svelteTesting() wires the browser-condition
+        // resolution + auto-cleanup so client-side mount() works under jsdom (not the server build).
+        plugins: [svelte(), svelteTesting()],
+        test: {
+          name: "client-dom",
+          environment: "jsdom",
+          include: ["src/**/*.svelte.test.ts"],
+        },
+      },
+    ],
   },
 });

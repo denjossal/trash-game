@@ -1,0 +1,9 @@
+// interaction.ts — shared interaction-safety constants (Story 1.9b, UX-DR18).
+//
+// Lives in plain TS (not inside Button.svelte) so it has one importable home for both the component
+// and its test — `tsc -b` only sees the default export of a `*.svelte` module via the ambient
+// declaration, so a `<script module>` named export isn't reachable from a typed test.
+// Client-only (architecture.md#Client-boundary).
+
+/** Debounce window (ms): a second button activation within this window of a fired one is swallowed. */
+export const DEBOUNCE_MS = 350;
