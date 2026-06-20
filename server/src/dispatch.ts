@@ -1,24 +1,27 @@
 // dispatch.ts — intent router + phase-legality; the single try/catch that turns an IntentError into a
 // targeted `error` event. [Source: architecture.md#Canonical-round-trip, #The-rules table — single-error-catch-site]
 //
-// SCOPE (Story 1.6 → 1.7): routes createRoom + joinRoom. hostSetLives (1.8) and the gameplay intents
+// SCOPE (Story 1.6 → 1.7 → 1.8): routes createRoom + joinRoom + hostSetLives. The gameplay intents
 // (deal/swap/keep/drawFromDeck/revealAll/dealAgain/newGame/hostRemovePlayer/hostReassign — Epics 2–4)
 // are routed to an explicit not-yet-implemented rejection, NEVER silently accepted. The ONE try/catch
 // lives here; handlers throw IntentError and never send.
 //
-// LOBBY VALIDATION (Decision #1, AC-1.6.3/1.7.5): lobby-phase intents (createRoom, joinRoom) are guarded
-// by lightweight phase-checking + the Durable Object's single-threaded serialization — NOT the formal
-// two-scope token guard (turnToken/phaseToken), which would no-op in `lobby` and arrives in Epic 2
-// (server/src/rules/validate.ts, not yet created). Documented so Epic 2's guard never reroutes lobby
-// actions. createRoom/joinRoom carry no token (payloads are {name} / {code,name,sessionToken?}).
+// LOBBY VALIDATION (Decision #1, AC-1.6.3/1.7.5/1.8.3): lobby-phase intents (createRoom, joinRoom,
+// hostSetLives) are guarded by lightweight phase-checking + the Durable Object's single-threaded
+// serialization — NOT the formal two-scope token guard (turnToken/phaseToken), which would no-op in
+// `lobby` and arrives in Epic 2 (server/src/rules/validate.ts, not yet created). Documented so Epic 2's
+// guard never reroutes lobby actions. createRoom/joinRoom carry no token (payloads are {name} /
+// {code,name,sessionToken?}); hostSetLives carries a `phaseToken` that is ACCEPTED-BUT-NOT-GUARDED in
+// lobby (it is 0 pre-Deal and never advances) and is NOT bumped (set-lives is config, not a transition).
 // [Source: architecture.md D4 lines 389–403; shared/src/types.ts Intent union.]
 //
-// FAN-OUT (Story 1.7): a roster change (join, and later leave/host-controls) re-projects to EVERY
-// connection via push-state.ts `fanOut` — each device gets its OWN per-player projection (never a single
-// broadcast payload). createRoom still pushes to the one creating socket only. [Source: round-trip 523.]
+// FAN-OUT (Story 1.7/1.8): a roster/config change (join, set-lives, and later leave/host-controls)
+// re-projects to EVERY connection via push-state.ts `fanOut` — each device gets its OWN per-player
+// projection (never a single broadcast payload). createRoom still pushes to the one creating socket only.
+// [Source: round-trip 523.]
 import type { Intent } from "@trash/shared";
 import { IntentError } from "@trash/shared";
-import { handleCreateRoom, handleJoinRoom, type TableHost } from "./handlers.js";
+import { handleCreateRoom, handleHostSetLives, handleJoinRoom, type TableHost } from "./handlers.js";
 import { fanOut, pushError, pushState } from "./push-state.js";
 
 /** The connection dispatch sends to. A partyserver Connection IS a WebSocket; we also stamp its
@@ -57,9 +60,21 @@ export async function dispatch(host: TableHost, connection: DispatchConnection, 
         fanOut(host.connections(), host.table!);
         return;
       }
-      // --- NOT in Story 1.7 — explicit rejection, never a silent accept. ---
-      // hostSetLives → Story 1.8; deal/swap/keep/drawFromDeck/revealAll/dealAgain/newGame/
-      // hostRemovePlayer/hostReassign → Epics 2–4.
+      case "hostSetLives": {
+        // The Host sets starting Lives in lobby (config change, not identity). Pass this socket's current
+        // stamp as the caller identity (same read the join re-seat guard uses): an unstamped socket →
+        // undefined → not-host. The handler validates (shape → table-null → phase → host → clamp), mutates
+        // startingLives + every player's lives, and persists. We do NOT setState (the caller is already
+        // stamped from create/join — set-lives binds no new identity).
+        await handleHostSetLives(host, intent, connection.state?.playerId);
+        // A config change every device must re-render: re-project to EVERY connection, each for ITS OWN
+        // playerId (never one broadcast). On the error path the handler throws before this line, so the
+        // single try/catch turns a not-host/phase-illegal into a targeted `error` with NO fan-out.
+        fanOut(host.connections(), host.table!);
+        return;
+      }
+      // --- NOT in Story 1.8 — explicit rejection, never a silent accept. ---
+      // deal/swap/keep/drawFromDeck/revealAll/dealAgain/newGame/hostRemovePlayer/hostReassign → Epics 2–4.
       default:
         throw new IntentError("phase-illegal");
     }

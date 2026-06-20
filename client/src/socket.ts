@@ -96,6 +96,38 @@ export function buildCreateRoomIntent(name: string): Extract<Intent, { type: "cr
   return { type: "createRoom", payload: { name } };
 }
 
+// --- Story 1.8: hostSetLives send builder (the WIRE only — the stepper UI is Story 1.10) ---
+//
+// This story ships the SERVER authority + the client SEND for the Host setting starting Lives; the Lives
+// stepper (1–5, default 3), the Lives pips, and offering/hiding the control by Host status are Story 1.10
+// (UX-DR4). So here we export only the intent BUILDER (+ the thin `sendIntent` helper below) — the Host
+// Lobby surface (1.10) owns mounting the stepper onto the live, kept-open socket and calling these.
+//
+// phaseToken: the frozen payload is `hostSetLives{phaseToken, lives}`. In `lobby` the phaseToken is 0 and
+// the server accepts-but-does-not-guard it (Decision #1), so the caller passes the value from the current
+// tableState (0 in lobby). `lives` is the Host's chosen 1–5; the server CLAMPS out-of-range defensively.
+
+/** Build a `hostSetLives` intent (frozen payload `{phaseToken, lives}`). The Host Lobby stepper (1.10)
+ *  supplies the chosen `lives` (1–5) and the current `phaseToken` (0 in lobby). [Source: shared/src/types.ts.] */
+export function buildHostSetLivesIntent(lives: number, phaseToken: number): Extract<Intent, { type: "hostSetLives" }> {
+  return { type: "hostSetLives", payload: { phaseToken, lives } };
+}
+
+/**
+ * Send a built intent on an already-open, kept-alive socket (the lobby keeps its socket open after
+ * create/join). Thin builder-level helper so the Host Lobby surface (Story 1.10) can post a hostSetLives
+ * without re-opening a socket or re-implementing the JSON.stringify envelope. Sends on the LIVE socket;
+ * does NOT open a new one or auto-retry (reconnect stays disabled, AR-12 / §11.3).
+ *
+ * NOTE (Story 1.8 scope): `createRoomWithRetry`/`joinRoomAndListen` resolve with the live socket and
+ * DETACH their own listeners, so the lobby surface — not this module — owns the socket lifecycle +
+ * liveness from that point. This helper is the minimal send seam for that surface; mounting it (and the
+ * receive loop) is Story 1.9a/1.10. [Source: Story 1.8 Task 4 — builder-only acceptable; deferred-work #29.]
+ */
+export function sendIntent(socket: PartySocket, intent: Intent): void {
+  socket.send(JSON.stringify(intent));
+}
+
 /**
  * Construct the per-Table PartySocket with auto-reconnect DISABLED (AC-1.5.3).
  *

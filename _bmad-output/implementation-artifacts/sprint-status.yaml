@@ -4,6 +4,7 @@
 # (1-5 → ready-for-dev 2026-06-19 create-story; → in-progress → review 2026-06-19 dev-story; → done 2026-06-19 code-review)
 # (1-6 → review 2026-06-19 dev-story; → done 2026-06-19 code-review)
 # (1-7 → ready-for-dev 2026-06-19 create-story; → in-progress → review 2026-06-19 dev-story; → done 2026-06-19 code-review)
+# (1-8 → ready-for-dev 2026-06-19 create-story; → in-progress → review 2026-06-19 dev-story; → done 2026-06-19 code-review)
 # project: trash-game
 # project_key: NOKEY
 # tracking_system: file-system
@@ -67,7 +68,7 @@ development_status:
   1-5-player-identity-and-session: done
   1-6-create-a-table-and-get-a-room-code: done
   1-7-join-a-table-and-see-a-live-multi-device-roster: done
-  1-8-host-sets-starting-lives: backlog
+  1-8-host-sets-starting-lives: done
   1-9a-design-token-foundation-and-render-from-state-router: backlog
   1-9b-pwa-shell-voice-primitives-and-interaction-safety: backlog
   1-10-home-and-lobby-surfaces: backlog

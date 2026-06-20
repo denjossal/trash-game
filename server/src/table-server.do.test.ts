@@ -11,7 +11,7 @@
 // `wrangler dev` integration job. [Source: 1-1-spike-findings AC1 + follow-up; epics.md#Story-1.7.]
 import { SELF, env, runInDurableObject } from "cloudflare:test";
 import { expect, test } from "vitest";
-import { MAX_PLAYERS, ROOM_CODE_ALPHABET, ROOM_CODE_LEN } from "@trash/shared";
+import { MAX_LIVES, MAX_PLAYERS, MIN_LIVES, ROOM_CODE_ALPHABET, ROOM_CODE_LEN } from "@trash/shared";
 import type { ProjectedTableState, ServerEvent } from "@trash/shared";
 
 // Open a WebSocket to /parties/table/<code> (lowercase binding namespace — see index.ts routing note),
@@ -397,4 +397,152 @@ test("AC-1.7.1 SM-6: join projections carry NO sessionToken", async () => {
 
   host.close();
   guest.close();
+});
+
+// --- Story 1.8: hostSetLives — set starting Lives + fan-out + clamp + not-host + phase-illegal + shape ---
+//
+// The set-lives round-trip is a single Host action (not the multi-device activation gate), so it reuses
+// the same in-DO WS harness: create on a host socket (stays open), join a guest, then drive hostSetLives.
+// All cases run against the SAME DO (same idFromName), serialized by the input gate. [Source: Story 1.8 AC-all.]
+
+test("AC-1.8.1: hostSetLives sets startingLives + every player's lives, fanned out to host AND guest", async () => {
+  const host = await openConn("LIVS");
+  host.send({ type: "createRoom", payload: { name: "Marisol" } });
+  const created = asTableState(await host.next());
+  expect(created.startingLives).toBe(3); // DEFAULT_LIVES before any set.
+
+  const guest = await openConn("LIVS");
+  guest.send({ type: "joinRoom", payload: { code: "LIVS", name: "Beto" } });
+  asTableState(await guest.next()); // guest's join projection
+  asTableState(await host.next()); // host's join fan-out — drain
+
+  // The Host sets Lives to 5. Both devices receive a fresh tableState (the fan-out re-projection).
+  host.send({ type: "hostSetLives", payload: { phaseToken: 0, lives: 5 } });
+
+  const hostView = asTableState(await host.next());
+  expect(hostView.startingLives).toBe(5);
+  for (const p of hostView.players) expect(p.lives).toBe(5); // every seat synced (host + guest)
+  expect(hostView.phaseToken).toBe(0); // set-lives does NOT bump phaseToken (not a phase transition)
+
+  const guestView = asTableState(await guest.next());
+  expect(guestView.startingLives).toBe(5);
+  for (const p of guestView.players) expect(p.lives).toBe(5);
+
+  host.close();
+  guest.close();
+});
+
+test("AC-1.8.1: out-of-range lives CLAMP to MIN_LIVES..MAX_LIVES (never an error)", async () => {
+  const host = await openConn("CLMP");
+  host.send({ type: "createRoom", payload: { name: "Host" } });
+  await host.next(); // created
+
+  // Above MAX clamps to MAX_LIVES (5).
+  host.send({ type: "hostSetLives", payload: { phaseToken: 0, lives: 9 } });
+  const high = asTableState(await host.next());
+  expect(high.startingLives).toBe(MAX_LIVES);
+
+  // Below MIN clamps to MIN_LIVES (1) — both 0 and a negative value.
+  host.send({ type: "hostSetLives", payload: { phaseToken: 0, lives: 0 } });
+  const low = asTableState(await host.next());
+  expect(low.startingLives).toBe(MIN_LIVES);
+
+  host.send({ type: "hostSetLives", payload: { phaseToken: 0, lives: -3 } });
+  const neg = asTableState(await host.next());
+  expect(neg.startingLives).toBe(MIN_LIVES);
+
+  host.close();
+});
+
+test("AC-1.8.2: a non-Host hostSetLives is refused with not-host; authoritative value unchanged, no fan-out", async () => {
+  const host = await openConn("NHST");
+  host.send({ type: "createRoom", payload: { name: "Host" } });
+  await host.next(); // created (startingLives 3)
+
+  const guest = await openConn("NHST");
+  guest.send({ type: "joinRoom", payload: { code: "NHST", name: "Guest" } });
+  asTableState(await guest.next()); // guest join projection
+  asTableState(await host.next()); // host join fan-out — drain
+
+  // The guest (non-Host) attempts to set Lives → refused to THAT connection only.
+  guest.send({ type: "hostSetLives", payload: { phaseToken: 0, lives: 2 } });
+  const refusal = await guest.next();
+  expect(refusal.type).toBe("error");
+  expect((refusal as Extract<ServerEvent, { type: "error" }>).payload.reason).toBe("not-host");
+
+  // The authoritative persisted summary is UNCHANGED (still startingLives 3, lives 3) — no mutation, no
+  // fan-out (the host saw no new tableState; its next event, after a real set, would be the only push).
+  const stub = env.Table.get(env.Table.idFromName("NHST"));
+  const summary = await runInDurableObject(stub, async (_instance, state) =>
+    state.storage.get<{ startingLives: number; players: { lives: number }[] }>("table"),
+  );
+  expect(summary?.startingLives).toBe(3);
+  for (const p of summary?.players ?? []) expect(p.lives).toBe(3);
+
+  host.close();
+  guest.close();
+});
+
+test("AC-1.8.3: hostSetLives outside lobby is refused with phase-illegal", async () => {
+  // Seed a non-lobby summary (mirror the 1.7 late-join seed). D2.1 coerces the live `turns` phase to
+  // `roundResult` on wake — still !== "lobby", so the lobby-only set-lives refusal holds.
+  const stub = env.Table.get(env.Table.idFromName("PHIL"));
+  await runInDurableObject(stub, async (_instance, state) => {
+    await state.storage.put("table", {
+      code: "PHIL",
+      phase: "turns",
+      hostId: "host-1",
+      startingLives: 3,
+      players: [{ id: "host-1", name: "Host", lives: 3, isAlive: true, seatIndex: 0 }],
+      phaseToken: 2,
+    });
+  });
+
+  // Connect + create to identify this socket as the host of THIS DO... but the DO is already claimed
+  // (seeded summary) so createRoom is rejected. Instead we just send hostSetLives on a fresh socket:
+  // the seeded phase is non-lobby, so phase-illegal fires before the host check regardless of identity.
+  const conn = await openConn("PHIL");
+  conn.send({ type: "hostSetLives", payload: { phaseToken: 2, lives: 4 } });
+  const ev = await conn.next();
+  expect(ev.type).toBe("error");
+  expect((ev as Extract<ServerEvent, { type: "error" }>).payload.reason).toBe("phase-illegal");
+  conn.close();
+});
+
+test("AC-1.8.4: a malformed hostSetLives (missing / non-number lives) is a clean typed error, no hang", async () => {
+  const host = await openConn("SHAP");
+  host.send({ type: "createRoom", payload: { name: "Host" } });
+  await host.next(); // created
+
+  // Missing `lives` entirely.
+  host.send({ type: "hostSetLives", payload: { phaseToken: 0 } });
+  const missing = await host.next();
+  expect(missing.type).toBe("error");
+
+  // Non-numeric `lives` (a string).
+  host.send({ type: "hostSetLives", payload: { phaseToken: 0, lives: "5" } });
+  const nonNumber = await host.next();
+  expect(nonNumber.type).toBe("error");
+
+  // The state is unchanged after the malformed sends — a follow-up valid set still works (no hang).
+  host.send({ type: "hostSetLives", payload: { phaseToken: 0, lives: 4 } });
+  const ok = asTableState(await host.next());
+  expect(ok.startingLives).toBe(4);
+
+  host.close();
+});
+
+test("AC-1.8.5 SM-6: the hostSetLives fan-out carries NO sessionToken; startingLives is public", async () => {
+  const host = await openConn("SM6L");
+  host.send({ type: "createRoom", payload: { name: "Host" } });
+  await host.next(); // created
+
+  host.send({ type: "hostSetLives", payload: { phaseToken: 0, lives: 2 } });
+  const view = asTableState(await host.next());
+
+  const serialized = JSON.stringify(view);
+  expect(serialized.toLowerCase()).not.toContain("sessiontoken");
+  expect(view.startingLives).toBe(2); // the public field is present and visible.
+
+  host.close();
 });

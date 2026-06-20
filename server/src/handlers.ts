@@ -2,12 +2,12 @@
 // (host.table = ...) or write ctx.storage, always AFTER validation/claim.
 // [Source: architecture.md#Canonical-round-trip, #Architectural-Boundaries — state-mutation boundary]
 //
-// SCOPE (Story 1.6 → 1.7): handleCreateRoom + handleJoinRoom + markDisconnected (the presence flip
-// onClose calls). setLives (1.8) and the gameplay handlers (deal/swap/reveal/host-controls, Epics 2–4)
-// are NOT implemented here yet — dispatch.ts routes them to an explicit "not in this story" rejection,
-// never a silent accept.
+// SCOPE (Story 1.6 → 1.7 → 1.8): handleCreateRoom + handleJoinRoom + markDisconnected (the presence flip
+// onClose calls) + handleHostSetLives (the Host setting starting Lives in lobby). The gameplay handlers
+// (deal/swap/reveal/the remaining host-controls, Epics 2–4) are NOT implemented here yet — dispatch.ts
+// routes them to an explicit "not in this story" rejection, never a silent accept.
 import type { Intent, Player, TableState } from "@trash/shared";
-import { DEFAULT_LIVES, IntentError, MAX_PLAYERS } from "@trash/shared";
+import { DEFAULT_LIVES, IntentError, MAX_LIVES, MAX_PLAYERS, MIN_LIVES } from "@trash/shared";
 import { issueIdentity } from "./identity.js";
 import { loadSummary, persistSummary } from "./persistence.js";
 
@@ -216,6 +216,82 @@ export async function handleJoinRoom(
   await persistSummary(host.storage, host.table);
 
   return playerId;
+}
+
+/**
+ * handleHostSetLives — the Host sets the starting Lives for the Table in `lobby` (FR-4). Mutates the
+ * config: clamps `lives` to MIN_LIVES..MAX_LIVES, assigns `startingLives`, syncs EVERY Player's `lives`
+ * to the same value (pre-Deal every Player is equal — no spent/remaining distinction yet), and persists
+ * the durable summary. Returns void — the caller is already seated/stamped; set-lives binds no identity.
+ *
+ * `callerPlayerId` is the connection's current stamp (dispatch reads `connection.state?.playerId`, the
+ * SAME stamp the join re-seat guard uses). An unstamped socket (never created/joined) → `undefined` →
+ * `!== hostId` → `not-host`, the correct refusal for a socket that has no business setting config.
+ *
+ * VALIDATION ORDER (lightweight phase-checking + DO serialization, Decision #1 — NOT the Epic 2 two-scope
+ * guard, which would no-op in `lobby`): shape → table-null → phase → host → clamp. Each precedes the sole
+ * state assignment.
+ *   - SHAPE (AC-1.8.4): a missing payload / non-finite `lives` would throw a raw TypeError on the clamp
+ *     read below — NOT an IntentError, so dispatch would rethrow and the client would get no `error` and
+ *     hang. Reject the malformed shape cleanly as `phase-illegal` (the closest honest frozen reason — the
+ *     SAME documented precedent as handleCreateRoom/handleJoinRoom; out-of-RANGE numeric `lives` is NOT a
+ *     shape error — it CLAMPS, AC-1.8.1). [Source: handlers.ts:72/166 payload-shape-guard precedent.]
+ *   - table-null: a set-lives to an unclaimed DO cannot happen via the shipped client (you must
+ *     create/join first, which warms `host.table`); onStart hydrates before the first onMessage, so null
+ *     ⇒ never claimed. Guard defensively as `phase-illegal` (no room to configure).
+ *   - phase-illegal (AC-1.8.3): `phase !== "lobby"` ⇒ refuse. Setting *starting* Lives is a pre-Deal/lobby
+ *     action; the mid-session Lives change (clamp-vs-top-up, M1) is Story 4.2 / FR-14, NOT this story.
+ *   - not-host (AC-1.8.2): `callerPlayerId !== hostId` ⇒ refuse. FIRST use of the frozen `not-host`
+ *     ErrorReason. The server enforces host-authority independently of the client (NFR-2): a crafted wire
+ *     message from a non-Host device is refused here even though Story 1.10 also hides the stepper.
+ *
+ * phaseToken is CARRIED in the payload but NOT guarded in lobby (it is 0 and never advances pre-Deal —
+ * Decision #1), and set-lives does NOT bump it (setting config is not a phase transition — only
+ * deal/reveal/re-deal/newGame bump phaseToken). [Source: architecture.md D4 lines 389–403; types.ts.]
+ *
+ * PERSIST (unlike the memory-only presence flip): `startingLives` AND `players[].lives` are BOTH durable
+ * fields, so a reload must see the Host's chosen value — this handler MUST persistSummary. Idempotent:
+ * re-setting the same value re-persists + re-fans-out harmlessly (no early-return; a re-fan-out is cheap
+ * and keeps every device authoritative). No concurrency cap (it mutates existing fields, appends nothing);
+ * the only `await` is the persist, after the in-memory mutation — read→decide→write stays a tight single
+ * DO turn. [Source: persistence.ts DurablePlayer/DurableSummary; architecture single-threaded DO turn.]
+ */
+export async function handleHostSetLives(
+  host: TableHost,
+  intent: Extract<Intent, { type: "hostSetLives" }>,
+  callerPlayerId: string | undefined,
+): Promise<void> {
+  // --- PAYLOAD SHAPE GUARD (AC-1.8.4): a non-finite/absent `lives` is a clean error, not a hang. ---
+  if (typeof intent.payload?.lives !== "number" || !Number.isFinite(intent.payload.lives)) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- table-null (defensive): an unclaimed DO has no room to configure. ---
+  if (host.table === null) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- phase-illegal (AC-1.8.3): setting STARTING Lives is lobby-only; mid-session is Story 4.2. ---
+  if (host.table.phase !== "lobby") {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- not-host (AC-1.8.2): only the Host may set Lives (server-authoritative, NFR-2). ---
+  if (callerPlayerId !== host.table.hostId) {
+    throw new IntentError("not-host");
+  }
+
+  // --- CLAMP (AC-1.8.1): constrain to 1..5; out-of-range clamps (never errors). Math.trunc so a
+  // fractional value floors toward an integer (defensive — the client stepper only sends integers). ---
+  const next = Math.max(MIN_LIVES, Math.min(MAX_LIVES, Math.trunc(intent.payload.lives)));
+
+  // --- MUTATE + PERSIST (sole state-assignment site): set startingLives AND sync every Player's lives.
+  // Pre-Deal the invariant is `every players[i].lives === startingLives` (seeded equal at create/join);
+  // keep them equal so the lobby roster's Lives pips (Story 1.10) match the stepper. The only await is the
+  // persist, after the in-memory mutation — startingLives + players[].lives are durable (MUST persist). ---
+  host.table.startingLives = next;
+  for (const p of host.table.players) p.lives = next;
+  await persistSummary(host.storage, host.table);
 }
 
 /**
