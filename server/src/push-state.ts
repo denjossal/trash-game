@@ -7,14 +7,22 @@
 // raw TableState is NEVER serialized to a client. [Source: architecture.md lines 104–110, 240–241,
 // 367–376; eslint.config.js GATE 1 + the server/src/push-state.ts exemption.]
 //
-// SCOPE (Story 1.6): pushState (the tableState send) + pushError (the targeted error send). Fan-out
-// to every connection is the CALLER's loop (`for (const c of conns) pushState(c, ...)`), not broadcast.
+// SCOPE (Story 1.6 → 1.7): pushState (the per-connection tableState send) + pushError (the targeted
+// error send) + fanOut (the roster-change re-projection to EVERY connection). The fan-out loop lives
+// HERE — not in dispatch/table-server — so the only module that calls .send is also the only module
+// that loops over connections to send; callers pass the connection set, never touch .send themselves,
+// and .broadcast is NEVER used (it would send ONE payload to all, breaking per-recipient projection /
+// SM-6). [Source: architecture.md round-trip line 523 + the ✅/❌ example lines 532–538.]
 import type { ErrorReason, ServerEvent, TableState } from "@trash/shared";
 import { projectStateFor } from "./project-state.js";
 
 /** Anything we can send a string to — a partyserver Connection IS a WebSocket. Kept minimal so this
  *  module does not import partyserver (and so tests can pass a stub). */
 type Sendable = { send(message: string): void };
+
+/** A connection in the fan-out set: sendable, and carrying its stamped per-socket state (the owning
+ *  playerId set via setState in dispatch). `state` is null until the socket identifies (pre-join). */
+type Projectable = Sendable & { state: { playerId: string } | null };
 
 /**
  * Project `state` for `playerId` and send it as the single `tableState` event to ONE connection.
@@ -35,4 +43,19 @@ export function pushState(connection: Sendable, state: TableState, playerId: str
 export function pushError(connection: Sendable, reason: ErrorReason): void {
   const event: ServerEvent = { type: "error", payload: { reason } };
   connection.send(JSON.stringify(event));
+}
+
+/**
+ * Fan out `state` to EVERY connection (the canonical roster-change re-projection — Story 1.7). Each
+ * connection is projected SEPARATELY for ITS OWN playerId: projectStateFor computes a per-player `you`
+ * (and, at Showdown, only the owner's hand), so a single broadcast payload would give every device the
+ * wrong `you` AND leak hands. A connection that has not yet identified (state === null — e.g. a socket
+ * open before its joinRoom completes) is projected with an empty playerId, which projectStateFor maps to
+ * the spectator fallback (no `you.hand`, isAlive/isConnected false) — correct for a pre-join socket.
+ * [Source: architecture.md round-trip line 523, lines 532–538; project-state.ts spectator fallback.]
+ */
+export function fanOut(connections: Iterable<Projectable>, state: TableState): void {
+  for (const connection of connections) {
+    pushState(connection, state, connection.state?.playerId ?? "");
+  }
 }

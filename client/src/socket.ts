@@ -106,10 +106,25 @@ export function buildCreateRoomIntent(name: string): Extract<Intent, { type: "cr
  * ships now. [Source: node_modules/partysocket Options.maxRetries; architecture.md socket.ts description.]
  *
  * Host/URL comes from `import.meta.env.VITE_WS_URL` (never hard-coded). `room` is the Room Code.
+ *
+ * FAIL-LOUD on missing config (Story 1.7 — deferred-work #48): an empty/unset VITE_WS_URL would NOT
+ * throw at PartySocket construction (the empty-host guard lives only in partysocket's reconnect path),
+ * so `getPartyInfo` builds `wss:///parties/...` with an empty authority and the single `maxRetries:0`
+ * connect fails SILENTLY — a misconfigured build gets a dead socket with no diagnostic. The live
+ * connection flows (createRoom / joinRoom) own fail-loud config behavior, so we throw a clear error here
+ * instead of tolerating `host: ""`. (1.5 sanctioned the empty fallback only while socket.ts was an
+ * unmounted issuance-only seam; now it constructs real connections.) [Source: deferred-work.md #48.]
  */
 export function createSocket(room: string): PartySocket {
+  const host = import.meta.env.VITE_WS_URL;
+  if (typeof host !== "string" || host.length === 0) {
+    throw new Error(
+      "VITE_WS_URL is not set — cannot open a Table socket. Set it in the client build environment " +
+        "(e.g. .env / Pages env) to the server origin (wss://… or the wrangler-dev host).",
+    );
+  }
   return new PartySocket({
-    host: import.meta.env.VITE_WS_URL ?? "",
+    host,
     room,
     maxRetries: 0, // RECONNECT DISABLED (AR-12 / §11.3) — see doc comment above.
   });
@@ -205,5 +220,92 @@ export function createRoomWithRetry(
       socket.addEventListener("error", onFailure);
     };
     attempt(maxAttempts);
+  });
+}
+
+// --- Story 1.7: joinRoom send + listen ---
+
+/** A failed join carries the server's typed reason so the UI can prompt a fix. `bad-code` = the code is
+ *  wrong/expired (correct it and retry); `room-full` = the Table is at the seat cap; `phase-illegal` =
+ *  the game is already in progress (no late join). Transport failures use the synthetic reasons below. */
+export type JoinFailure = { reason: string };
+
+/**
+ * Join a Table by Room Code (AC-1.7.1/1.7.2/1.7.3). Connects to /parties/table/<code>, sends a
+ * `joinRoom` intent (echoing the stored session token when present — accepted-but-not-resumed in MVP),
+ * and resolves with the connected socket once a `tableState` arrives (the live lobby is on that socket).
+ *
+ * UNLIKE createRoom, a join error is NOT transparently retried: a `bad-code`/`room-full`/`phase-illegal`
+ * is a real, user-actionable condition (a typo'd/expired code, a full or in-progress Table), so we reject
+ * with the typed `reason` for the caller to surface ("check the code and try again"). The surface that
+ * shows that message + a retry input is Stories 1.9a/1.10; this helper ships the wiring and is NOT mounted
+ * into App.svelte yet. [Source: epics.md#Story-1.7 AC-1.7.2; shared ErrorReason; architecture D4.]
+ *
+ * FAILURE HANDLING mirrors createRoomWithRetry: one `fail` path tears down the socket (clear timer,
+ * remove all four listeners, close) so a server-down / silent / dropped socket can't hang the Promise or
+ * leak listeners; a `settled` guard makes a late close/error after success a no-op. A missing VITE_WS_URL
+ * throws synchronously from createSocket (fail-loud — deferred-work #48), surfaced as a rejected Promise.
+ */
+export function joinRoomAndListen(
+  code: string,
+  name: string,
+  timeoutMs = CREATE_ROOM_ATTEMPT_TIMEOUT_MS,
+): Promise<{ socket: PartySocket }> {
+  return new Promise((resolve, reject) => {
+    let socket: PartySocket;
+    try {
+      socket = createSocket(code); // throws (fail-loud) if VITE_WS_URL is unset.
+    } catch (err) {
+      reject(err as Error);
+      return;
+    }
+    let settled = false;
+
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      socket.removeEventListener("message", onMessage);
+      socket.removeEventListener("open", onOpen);
+      socket.removeEventListener("close", onTransportFail);
+      socket.removeEventListener("error", onTransportFail);
+    };
+
+    const fail = (failure: JoinFailure): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.close();
+      reject(Object.assign(new Error(`joinRoom failed: ${failure.reason}`), failure));
+    };
+    const onTransportFail = (): void => fail({ reason: "connection-failed" });
+
+    const timer = setTimeout(() => fail({ reason: "timeout" }), timeoutMs);
+
+    const onOpen = (): void => {
+      socket.send(JSON.stringify(buildJoinRoomIntent(code, name)));
+    };
+    const onMessage = (ev: MessageEvent): void => {
+      let event: { type?: string; payload?: { reason?: string } };
+      try {
+        event = JSON.parse(ev.data as string) as { type?: string; payload?: { reason?: string } };
+      } catch {
+        return; // ignore non-JSON noise; the timeout still guards a never-completing reply.
+      }
+      if (event.type === "tableState") {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve({ socket }); // joined — the live lobby is on this (kept-open) socket.
+      } else if (event.type === "error") {
+        // A typed, user-actionable failure (bad-code / room-full / phase-illegal). Surface it — do NOT
+        // auto-retry (a join error is a real condition the human resolves, not a transparent collision).
+        fail({ reason: event.payload?.reason ?? "error" });
+      }
+      // Any other event type is ignored; the timeout guards against a reply that never completes.
+    };
+
+    socket.addEventListener("open", onOpen);
+    socket.addEventListener("message", onMessage);
+    socket.addEventListener("close", onTransportFail);
+    socket.addEventListener("error", onTransportFail);
   });
 }

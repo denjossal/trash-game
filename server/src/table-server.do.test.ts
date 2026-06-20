@@ -9,9 +9,9 @@
 // yield to another inbound message between them. We assert it SEQUENTIALLY: a second createRoom against
 // the same code (same idFromName) is rejected. The full multi-device concurrent test is Story 1.7's
 // `wrangler dev` integration job. [Source: 1-1-spike-findings AC1 + follow-up; epics.md#Story-1.7.]
-import { SELF } from "cloudflare:test";
+import { SELF, env, runInDurableObject } from "cloudflare:test";
 import { expect, test } from "vitest";
-import { ROOM_CODE_ALPHABET, ROOM_CODE_LEN } from "@trash/shared";
+import { MAX_PLAYERS, ROOM_CODE_ALPHABET, ROOM_CODE_LEN } from "@trash/shared";
 import type { ProjectedTableState, ServerEvent } from "@trash/shared";
 
 // Open a WebSocket to /parties/table/<code> (lowercase binding namespace — see index.ts routing note),
@@ -118,4 +118,283 @@ test("SM-6: the tableState payload carries NO sessionToken (the token is client-
   // Silence unused-type lint if ProjectedTableState import is otherwise unreferenced.
   const _typecheck: ProjectedTableState = s;
   void _typecheck;
+});
+
+// --- Story 1.7: join round-trip + fan-out + bad-code + late-join + room-full + concurrency ---
+//
+// CONCURRENCY NOTE (carried from 1.6): the pool-workers project cannot drive TRUE wall-clock-concurrent
+// WebSockets — multiple SELF.fetch upgrades to the same /parties/table/<code> route to the SAME DO and
+// its messages are serialized by the DO input gate (exactly the property AC-1.7.5 rests on). The
+// ~6-device live activation gate (AC-1.7.4 / SM-4) needs real concurrent sockets and lives in
+// server/test/integration against `wrangler dev`. Here we assert the single-turn correctness:
+// concurrent-fired joins (queued behind the gate) yield no duplicate seatIndex and no seat-cap overflow.
+//
+// The createRoom helper above closes its socket after the first event. Join needs sockets that STAY OPEN
+// to observe the fan-out (the host receiving an updated roster when a joiner arrives), so the helpers
+// below open a connection, expose send + an event-queue reader, and let the caller close when done.
+
+type ServerEventMessage = ServerEvent;
+
+/** An open, accepted WebSocket to /parties/table/<code> with a small event reader. Stays open until
+ *  close() — so a host socket can observe the fan-out triggered by a later joiner. */
+type OpenConn = {
+  send(intent: object): void;
+  /** Resolve with the next server event AFTER this call (events that arrived earlier are buffered). */
+  next(timeoutMs?: number): Promise<ServerEventMessage>;
+  close(): void;
+};
+
+async function openConn(code: string): Promise<OpenConn> {
+  const res = await SELF.fetch(`http://example.com/parties/table/${code}`, {
+    headers: { Upgrade: "websocket" },
+  });
+  const ws = res.webSocket;
+  if (!ws) throw new Error(`expected a WebSocket upgrade for /parties/table/${code}, got status ${res.status}`);
+  ws.accept();
+
+  const buffer: ServerEventMessage[] = [];
+  let waiter: ((ev: ServerEventMessage) => void) | null = null;
+  ws.addEventListener("message", (ev: MessageEvent) => {
+    const parsed = JSON.parse(ev.data as string) as ServerEventMessage;
+    if (waiter) {
+      const w = waiter;
+      waiter = null;
+      w(parsed);
+    } else {
+      buffer.push(parsed);
+    }
+  });
+
+  return {
+    send: (intent: object) => ws.send(JSON.stringify(intent)),
+    next: (timeoutMs = 5000) =>
+      new Promise<ServerEventMessage>((resolve, reject) => {
+        const buffered = buffer.shift();
+        if (buffered) {
+          resolve(buffered);
+          return;
+        }
+        const timer = setTimeout(() => reject(new Error("timed out waiting for a server event")), timeoutMs);
+        waiter = (ev) => {
+          clearTimeout(timer);
+          resolve(ev);
+        };
+      }),
+    close: () => ws.close(),
+  };
+}
+
+function asTableState(ev: ServerEventMessage): ProjectedTableState {
+  expect(ev.type).toBe("tableState");
+  return (ev as Extract<ServerEvent, { type: "tableState" }>).payload;
+}
+
+test("AC-1.7.1: joinRoom adds the Player and re-projects to EVERY connection (host + joiner)", async () => {
+  // Host creates + stays open so it can observe the fan-out when a joiner arrives.
+  const host = await openConn("JOIN");
+  host.send({ type: "createRoom", payload: { name: "Marisol" } });
+  const created = asTableState(await host.next());
+  expect(created.players).toHaveLength(1);
+  expect(created.you.isHost).toBe(true);
+
+  // A second device joins the same code (same DO).
+  const guest = await openConn("JOIN");
+  guest.send({ type: "joinRoom", payload: { code: "JOIN", name: "Beto" } });
+
+  // The joiner receives the updated roster as ITS OWN projection (you = Beto, seat 1, not host).
+  const guestView = asTableState(await guest.next());
+  expect(guestView.players).toHaveLength(2);
+  const beto = guestView.players.find((p) => p.name === "Beto");
+  expect(beto).toBeDefined();
+  expect(beto!.seatIndex).toBe(1);
+  expect(beto!.isAlive).toBe(true);
+  expect(beto!.isConnected).toBe(true);
+  expect(beto!.lives).toBe(created.startingLives);
+  expect(guestView.you.playerId).toBe(beto!.id);
+  expect(guestView.you.isHost).toBe(false);
+
+  // The HOST also receives a fresh projection (the fan-out) — roster now 2, still host on its own view.
+  const hostView = asTableState(await host.next());
+  expect(hostView.players).toHaveLength(2);
+  expect(hostView.you.isHost).toBe(true);
+  expect(hostView.you.playerId).toBe(created.you.playerId);
+
+  host.close();
+  guest.close();
+});
+
+test("AC-1.7.2: joining a never-claimed (bad/expired) code returns error bad-code, no ghost join", async () => {
+  // Connect to a code that was NEVER created → a fresh, unclaimed DO (table === null, no summary).
+  const conn = await openConn("NOPE");
+  conn.send({ type: "joinRoom", payload: { code: "NOPE", name: "Lost" } });
+
+  const ev = await conn.next();
+  expect(ev.type).toBe("error");
+  expect((ev as Extract<ServerEvent, { type: "error" }>).payload.reason).toBe("bad-code");
+  conn.close();
+});
+
+test("AC-1.7.3: joining a Table past the first Deal (phase !== lobby) is refused with phase-illegal", async () => {
+  // The `deal` handler is Epic 2, so we SEED a non-lobby durable summary directly into the DO's storage,
+  // then connect + join. onStart hydrates it; D2.1 coerces a live-round phase (`turns`) to `roundResult`
+  // on wake — still !== "lobby", so the late-join refusal holds either way. [Source: persistence.ts D2.1.]
+  const stub = env.Table.get(env.Table.idFromName("LATE"));
+  await runInDurableObject(stub, async (_instance, state) => {
+    await state.storage.put("table", {
+      code: "LATE",
+      phase: "turns",
+      hostId: "host-1",
+      startingLives: 3,
+      players: [{ id: "host-1", name: "Host", lives: 3, isAlive: true, seatIndex: 0 }],
+      phaseToken: 2,
+    });
+  });
+
+  const conn = await openConn("LATE");
+  conn.send({ type: "joinRoom", payload: { code: "LATE", name: "TooLate" } });
+  const ev = await conn.next();
+  expect(ev.type).toBe("error");
+  expect((ev as Extract<ServerEvent, { type: "error" }>).payload.reason).toBe("phase-illegal");
+  conn.close();
+});
+
+test("AC-1.7.5: joining at the seat cap returns error room-full", async () => {
+  // Create a Table, then fill it to MAX_PLAYERS (1 host + MAX-1 joiners), then one more join → room-full.
+  const host = await openConn("FULL");
+  host.send({ type: "createRoom", payload: { name: "Host" } });
+  await host.next(); // created (roster 1)
+
+  for (let i = 1; i < MAX_PLAYERS; i++) {
+    const g = await openConn("FULL");
+    g.send({ type: "joinRoom", payload: { code: "FULL", name: `P${i}` } });
+    await g.next(); // its own join projection (roster i+1)
+    // leave the socket open — closing it would flip isConnected but the seat is retained (still counts).
+  }
+
+  const overflow = await openConn("FULL");
+  overflow.send({ type: "joinRoom", payload: { code: "FULL", name: "TooMany" } });
+  const ev = await overflow.next();
+  expect(ev.type).toBe("error");
+  expect((ev as Extract<ServerEvent, { type: "error" }>).payload.reason).toBe("room-full");
+  overflow.close();
+  host.close();
+});
+
+test("re-seat guard: a second joinRoom on the SAME socket is refused (no double-seat, no orphaned presence)", async () => {
+  // Code review 2026-06-19: handleJoinRoom is symmetric with handleCreateRoom's re-claim guard — a socket
+  // that already owns a seat cannot re-join (it would mint a second playerId, push a duplicate Player, and
+  // the re-stamp would orphan the first seat's presence forever). Drive both re-join shapes on one socket.
+  const host = await openConn("RSEAT");
+  host.send({ type: "createRoom", payload: { name: "Host" } });
+  const created = asTableState(await host.next()); // roster 1
+
+  // (a) createRoom-then-joinRoom on the SAME socket → refused; roster unchanged.
+  host.send({ type: "joinRoom", payload: { code: "RSEAT", name: "HostAgain" } });
+  const hostRejoin = await host.next();
+  expect(hostRejoin.type).toBe("error");
+  expect((hostRejoin as Extract<ServerEvent, { type: "error" }>).payload.reason).toBe("phase-illegal");
+
+  // (b) a legitimate guest joins, then re-sends joinRoom on its own socket → refused.
+  const guest = await openConn("RSEAT");
+  guest.send({ type: "joinRoom", payload: { code: "RSEAT", name: "Guest" } });
+  asTableState(await guest.next()); // its own join projection (roster 2)
+  await host.next(); // host's fan-out for the guest join — drain it
+  guest.send({ type: "joinRoom", payload: { code: "RSEAT", name: "GuestAgain" } });
+  const guestRejoin = await guest.next();
+  expect(guestRejoin.type).toBe("error");
+  expect((guestRejoin as Extract<ServerEvent, { type: "error" }>).payload.reason).toBe("phase-illegal");
+
+  // The roster is still exactly host + guest — no duplicate seat was created by either re-join attempt.
+  const stub = env.Table.get(env.Table.idFromName("RSEAT"));
+  const players = await runInDurableObject(stub, async (_instance, state) => {
+    const summary = await state.storage.get<{ players: { id: string }[] }>("table");
+    return summary?.players ?? [];
+  });
+  expect(players).toHaveLength(2);
+  expect(new Set(players.map((p) => p.id)).size).toBe(2); // host + guest, no phantom third
+  expect(created.you.playerId).toBe(players[0].id); // host's original seat intact (not orphaned/replaced)
+
+  host.close();
+  guest.close();
+});
+
+test("AC-1.7.5: concurrently-fired joins stay correct (no duplicate seatIndex, no overflow)", async () => {
+  const host = await openConn("RACE");
+  host.send({ type: "createRoom", payload: { name: "Host" } });
+  const created = asTableState(await host.next());
+  expect(created.code).toBe("RACE");
+
+  // Open N sockets and fire joinRoom on all of them WITHOUT awaiting between sends. The DO input gate
+  // serializes the onMessage turns, so each join sees the previously-appended roster (the append is the
+  // commit point, with no yield between the cap-check and the push). Asserts the single-turn property
+  // AC-1.7.5 rests on; true wall-clock concurrency is AC-1.7.4's wrangler-dev job.
+  const N = 5;
+  const guests = await Promise.all(Array.from({ length: N }, () => openConn("RACE")));
+  guests.forEach((g, i) => g.send({ type: "joinRoom", payload: { code: "RACE", name: `G${i}` } }));
+
+  // Each guest receives at least its own join projection (and interleaved fan-outs). Drain one event per
+  // guest to be sure every join was processed before we inspect the authoritative roster. (Message
+  // ARRIVAL order across sockets is not deterministic — so we assert against the DO's own final state,
+  // not against whichever fan-out a given socket happened to see first.)
+  await Promise.all(guests.map((g) => g.next()));
+
+  // Inspect the DO's AUTHORITATIVE final roster via the persisted "table" summary (every join persists,
+  // so the durable record reflects all of them) — the single-turn correctness invariant: host + N
+  // guests, no overflow, no duplicate seatIndex, contiguous 0..N. Reading storage (not the private
+  // in-memory field) keeps this assertion against the durable source of truth.
+  const stub = env.Table.get(env.Table.idFromName("RACE"));
+  const seats = await runInDurableObject(stub, async (_instance, state) => {
+    const summary = await state.storage.get<{ players: { seatIndex: number }[] }>("table");
+    return (summary?.players ?? []).map((p) => p.seatIndex).sort((a, b) => a - b);
+  });
+
+  expect(seats.length).toBe(1 + N);
+  expect(seats.length).toBeLessThanOrEqual(MAX_PLAYERS);
+  expect(seats).toEqual(Array.from({ length: 1 + N }, (_, i) => i)); // contiguous, no gap
+  expect(new Set(seats).size).toBe(seats.length); // no duplicate seatIndex
+
+  host.close();
+  guests.forEach((g) => g.close());
+});
+
+test("AC-1.7.3: a leaver flips isConnected:false on every remaining device (presence fan-out)", async () => {
+  const host = await openConn("LEAV");
+  host.send({ type: "createRoom", payload: { name: "Host" } });
+  await host.next(); // created
+
+  const guest = await openConn("LEAV");
+  guest.send({ type: "joinRoom", payload: { code: "LEAV", name: "Leaver" } });
+  await guest.next(); // guest's join projection
+  const afterJoin = asTableState(await host.next()); // host's fan-out: roster 2, both connected
+  const leaver = afterJoin.players.find((p) => p.name === "Leaver")!;
+  expect(leaver.isConnected).toBe(true);
+
+  // The guest leaves — onClose flips its isConnected:false and fans out to the remaining host socket.
+  guest.close();
+  const afterLeave = asTableState(await host.next());
+  const goneNow = afterLeave.players.find((p) => p.name === "Leaver")!;
+  expect(goneNow.isConnected).toBe(false); // presence flipped — they stop taking Turns.
+  expect(goneNow.isAlive).toBe(true); // RECORD retained — a disconnected-but-alive player still owes a Turn.
+  expect(afterLeave.players).toHaveLength(2); // seat NOT removed.
+
+  host.close();
+});
+
+test("AC-1.7.1 SM-6: join projections carry NO sessionToken", async () => {
+  const host = await openConn("TOKN");
+  host.send({ type: "createRoom", payload: { name: "Host" } });
+  await host.next();
+
+  const guest = await openConn("TOKN");
+  guest.send({ type: "joinRoom", payload: { code: "TOKN", name: "Guest", sessionToken: "should-not-echo" } });
+  const guestView = await guest.next();
+
+  // The sessionToken (even one echoed by the client) must never ride a projection. The token is
+  // accepted-but-not-resumed in MVP (no reconnection FLOW) and stays server/client-private.
+  const serialized = JSON.stringify(asTableState(guestView));
+  expect(serialized.toLowerCase()).not.toContain("sessiontoken");
+  expect(serialized).not.toContain("should-not-echo");
+
+  host.close();
+  guest.close();
 });
