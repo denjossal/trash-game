@@ -37,6 +37,9 @@ export const CONNECTING = "Connecting…";
 export const START_TABLE = "Start a table";
 export const JOIN_TABLE = "Join a table";
 
+/** Lobby conductor-bar primary action (Story 1.10 shell; the deal INTENT is Epic 2). */
+export const DEAL = "Deal";
+
 /** Room code line (Story 1.10). `code` is the 4-letter Room Code. */
 export const roomCode = (code: string): string => `Your table code: ${code} — read it out.`;
 
@@ -68,3 +71,7 @@ export const winner = (name: string): string => `${name} wins it. One more?`;
 
 /** Bad / expired Room Code (Story 1.10 Home). */
 export const BAD_CODE = "No table with that code — check the letters?";
+
+/** Table is full or the game already started (Story 1.10 Home) — the code is right, the table just
+ *  can't take a join now. Warm + retryable (try another table); never leaks the raw server reason. */
+export const TABLE_BUSY = "That table's full or already playing — try another?";

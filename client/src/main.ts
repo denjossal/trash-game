@@ -1,7 +1,9 @@
 // Client entry. Mounts App; the PWA service worker is auto-registered by vite-plugin-pwa.
-// SCOPE (Story 1.9a): mounts App (now the render-from-state router) and imports the design-token
-// foundation once, before any surface renders. The read-only tableState store + the live socket.ts
-// receive loop are wired in Story 1.10 (when the real Home/Lobby surfaces exist to drive them).
+// SCOPE (Story 1.9a → 1.10): mounts App (the render-from-state router) and imports the design-token
+// foundation once, before any surface renders. The read-only tableState store + the live receive loop
+// live in `lib/table-store.svelte.ts` (Story 1.10) — a module-level $state holder whose ONLY writer is
+// the receive loop; App reads it via readTableState() and the Home surface drives create/join through
+// startTable()/joinTable(). The store is self-instantiating on import, so main.ts stays thin.
 import { mount } from "svelte";
 import App from "./App.svelte";
 // Design-token foundation (Story 1.9a, UX-DR1). Imported ONCE here so the tokens + the global brand
