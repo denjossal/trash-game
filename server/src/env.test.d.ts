@@ -5,4 +5,8 @@ declare module "cloudflare:test" {
     Table: DurableObjectNamespace;
   }
   export const env: ProvidedEnv;
+  // Service binding to the default Worker export — used by table-server.do.test.ts to drive a real
+  // WebSocket upgrade through the Worker fetch entry → routePartykitRequest → the TableServer DO.
+  // (Story 1.6: the createRoom round-trip test exercises onConnect/onMessage, not an RPC shortcut.)
+  export const SELF: Fetcher;
 }
