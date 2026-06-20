@@ -1,5 +1,5 @@
 # generated: 2026-06-19
-# last_updated: 2026-06-19
+# last_updated: 2026-06-19 (sprint-planning refresh — inventory reconciled, statuses preserved)
 # (1-4 → review 2026-06-19; → done 2026-06-19 code-review)
 # (1-5 → ready-for-dev 2026-06-19 create-story; → in-progress → review 2026-06-19 dev-story; → done 2026-06-19 code-review)
 # (1-6 → review 2026-06-19 dev-story; → done 2026-06-19 code-review)
@@ -7,6 +7,7 @@
 # (1-8 → ready-for-dev 2026-06-19 create-story; → in-progress → review 2026-06-19 dev-story; → done 2026-06-19 code-review)
 # (1-9a → ready-for-dev 2026-06-19 create-story; → in-progress → review 2026-06-19 dev-story; → done 2026-06-19 code-review)
 # (1-9b → ready-for-dev 2026-06-19 create-story; → in-progress → review 2026-06-19 dev-story; → done 2026-06-19 code-review)
+# (1-10 → ready-for-dev 2026-06-19 create-story; → in-progress → review 2026-06-19 dev-story; → done 2026-06-19 code-review)
 # project: trash-game
 # project_key: NOKEY
 # tracking_system: file-system
@@ -50,6 +51,7 @@
 
 generated: 2026-06-19
 last_updated: 2026-06-19
+# refreshed by sprint-planning 2026-06-19
 project: trash-game
 project_key: NOKEY
 tracking_system: file-system
@@ -73,7 +75,7 @@ development_status:
   1-8-host-sets-starting-lives: done
   1-9a-design-token-foundation-and-render-from-state-router: done
   1-9b-pwa-shell-voice-primitives-and-interaction-safety: done
-  1-10-home-and-lobby-surfaces: backlog
+  1-10-home-and-lobby-surfaces: done
   1-11-room-garbage-collection-zero-cost-backstop: backlog
   epic-1-retrospective: optional
 

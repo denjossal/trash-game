@@ -7,3 +7,8 @@
 
 /** Debounce window (ms): a second button activation within this window of a fired one is swallowed. */
 export const DEBOUNCE_MS = 350;
+
+/** Max display-name length (chars) accepted by the Home name field. Keeps roster rows / Lives-pip
+ *  layout sane and bounds the string sent to the server (length/content validation is the lobby UI's
+ *  job — Story 1.10). Lives in plain TS so the surface and its test share one importable home. */
+export const MAX_NAME_LEN = 20;

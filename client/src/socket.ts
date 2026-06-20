@@ -11,7 +11,7 @@
 // to the later connection-flow stories regardless. [Source: architecture.md#Complete-Project-Directory-Structure
 // — client/src/socket.ts; AR-12; §11.3; shared/src/types.ts joinRoom Intent.]
 import { PartySocket } from "partysocket";
-import type { Intent } from "@trash/shared";
+import type { Intent, ProjectedTableState } from "@trash/shared";
 import { ROOM_CODE_ALPHABET, ROOM_CODE_LEN } from "@trash/shared";
 
 /** Single localStorage key for the persisted session token (do not scatter the string). */
@@ -188,7 +188,7 @@ const CREATE_ROOM_ATTEMPT_TIMEOUT_MS = 10_000;
 export function createRoomWithRetry(
   name: string,
   maxAttempts = 5,
-): Promise<{ socket: PartySocket; code: string }> {
+): Promise<{ socket: PartySocket; code: string; state: ProjectedTableState }> {
   return new Promise((resolve, reject) => {
     const attempt = (remaining: number): void => {
       const code = generateCandidateCode();
@@ -224,9 +224,9 @@ export function createRoomWithRetry(
         socket.send(JSON.stringify(buildCreateRoomIntent(name)));
       };
       const onMessage = (ev: MessageEvent): void => {
-        let event: { type?: string };
+        let event: { type?: string; payload?: ProjectedTableState };
         try {
-          event = JSON.parse(ev.data as string) as { type?: string };
+          event = JSON.parse(ev.data as string) as { type?: string; payload?: ProjectedTableState };
         } catch {
           return; // ignore non-JSON noise; the timeout still guards against a never-completing reply.
         }
@@ -234,7 +234,9 @@ export function createRoomWithRetry(
           if (settled) return;
           settled = true;
           cleanup();
-          resolve({ socket, code }); // claimed — the lobby is live on this socket (kept open).
+          // Return the FIRST projection alongside the socket so the caller can seed its store and render
+          // the Lobby immediately (this first tableState is otherwise consumed-and-lost here). Story 1.10.
+          resolve({ socket, code, state: event.payload as ProjectedTableState }); // claimed — lobby live.
         } else if (event.type === "error") {
           // Any createRoom `error` is treated as "pick a fresh candidate and retry": a claim conflict
           // has no dedicated ErrorReason (the contract is frozen — see handlers.ts), so the server reuses
@@ -282,7 +284,7 @@ export function joinRoomAndListen(
   code: string,
   name: string,
   timeoutMs = CREATE_ROOM_ATTEMPT_TIMEOUT_MS,
-): Promise<{ socket: PartySocket }> {
+): Promise<{ socket: PartySocket; state: ProjectedTableState }> {
   return new Promise((resolve, reject) => {
     let socket: PartySocket;
     try {
@@ -316,9 +318,12 @@ export function joinRoomAndListen(
       socket.send(JSON.stringify(buildJoinRoomIntent(code, name)));
     };
     const onMessage = (ev: MessageEvent): void => {
-      let event: { type?: string; payload?: { reason?: string } };
+      let event: { type?: string; payload?: ProjectedTableState & { reason?: string } };
       try {
-        event = JSON.parse(ev.data as string) as { type?: string; payload?: { reason?: string } };
+        event = JSON.parse(ev.data as string) as {
+          type?: string;
+          payload?: ProjectedTableState & { reason?: string };
+        };
       } catch {
         return; // ignore non-JSON noise; the timeout still guards a never-completing reply.
       }
@@ -326,7 +331,8 @@ export function joinRoomAndListen(
         if (settled) return;
         settled = true;
         cleanup();
-        resolve({ socket }); // joined — the live lobby is on this (kept-open) socket.
+        // Return the first projection so the caller seeds its store and renders the Lobby at once. 1.10.
+        resolve({ socket, state: event.payload as ProjectedTableState }); // joined — live lobby on socket.
       } else if (event.type === "error") {
         // A typed, user-actionable failure (bad-code / room-full / phase-illegal). Surface it — do NOT
         // auto-retry (a join error is a real condition the human resolves, not a transparent collision).
