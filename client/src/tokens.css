@@ -1,0 +1,188 @@
+/*
+ * tokens.css — the "Electric Social" design-token foundation (Story 1.9a, UX-DR1).
+ *
+ * The FULL DESIGN.md token set as plain CSS custom properties — NO Tailwind, NO UI kit,
+ * NO CSS framework. Every later surface (1.9b/1.10, Epics 2–4) reads these vars; values
+ * live here once. Fonts are bundled locally (see fonts.css / @font-face) — no CDN.
+ * [Source: DESIGN.md Colors/Typography/Layout & Spacing/Shapes/Elevation & Depth.]
+ */
+
+/* Local fonts first, so the @font-face families resolve before the type tokens below. */
+@import "./fonts.css";
+
+:root {
+  /* ---------------------------------------------------------------------- */
+  /* Color palette (DESIGN.md Colors) — Material-3-aligned semantic naming.  */
+  /* ---------------------------------------------------------------------- */
+
+  /* Surface stack (tonal-stack elevation — lighter purple = higher) */
+  --color-surface: #1a0b2e;
+  --color-surface-dim: #1a0b2e;
+  --color-surface-bright: #413257;
+  --color-surface-container-lowest: #150629;
+  --color-surface-container-low: #231437;
+  --color-surface-container: #27183b;
+  --color-surface-container-high: #322346;
+  --color-surface-container-highest: #3d2e52;
+  --color-surface-variant: #3d2e52;
+  --color-surface-tint: #ecb2ff;
+
+  /* On-surface / inverse */
+  --color-on-surface: #eddcff;
+  --color-on-surface-variant: #d4c0d7;
+  --color-inverse-surface: #eddcff;
+  --color-inverse-on-surface: #38294d;
+
+  /* Outline — NB: --color-outline is the hollow-Lives-pip token (1.10) */
+  --color-outline: #9d8ba0;
+  --color-outline-variant: #514255;
+
+  /* Primary (violet) */
+  --color-primary: #ecb2ff;
+  --color-on-primary: #520071;
+  --color-primary-container: #bd00ff;
+  --color-on-primary-container: #ffffff;
+  --color-inverse-primary: #9900cf;
+
+  /* Secondary (NEON MINT lives here: secondary-container #36ffc4 — CTAs, active stroke,
+     filled Lives pips, turn indicator) */
+  --color-secondary: #ffffff;
+  --color-on-secondary: #003828;
+  --color-secondary-container: #36ffc4;
+  --color-on-secondary-container: #007255;
+
+  /* Tertiary (acid yellow-green) */
+  --color-tertiary: #d0cc05;
+  --color-on-tertiary: #333200;
+  --color-tertiary-container: #b3b000;
+  --color-on-tertiary-container: #434100;
+
+  /* Error (Showdown loser highlight: #ffb4ab stroke + #93000a fill) */
+  --color-error: #ffb4ab;
+  --color-on-error: #690005;
+  --color-error-container: #93000a;
+  --color-on-error-container: #ffdad6;
+
+  /* Fixed variants */
+  --color-primary-fixed: #f8d8ff;
+  --color-primary-fixed-dim: #ecb2ff;
+  --color-on-primary-fixed: #320047;
+  --color-on-primary-fixed-variant: #74009f;
+  --color-secondary-fixed: #36ffc4;
+  --color-secondary-fixed-dim: #00e1ab;
+  --color-on-secondary-fixed: #002116;
+  --color-on-secondary-fixed-variant: #00513c;
+  --color-tertiary-fixed: #ede933;
+  --color-tertiary-fixed-dim: #d0cc05;
+  --color-on-tertiary-fixed: #1d1d00;
+  --color-on-tertiary-fixed-variant: #4a4900;
+
+  /* Background */
+  --color-background: #1a0b2e;
+  --color-on-background: #eddcff;
+
+  /* ---------------------------------------------------------------------- */
+  /* Typography (DESIGN.md Typography) — Anybody (display) + Hanken Grotesk   */
+  /* (body). ALL weights >= 500: nothing thin/regular. Roles carry size +     */
+  /* weight + line-height + letter-spacing tokens.                            */
+  /* ---------------------------------------------------------------------- */
+  --font-family-display: "Anybody", system-ui, sans-serif;
+  --font-family-body: "Hanken Grotesk", system-ui, sans-serif;
+
+  /* display-xl */
+  --type-display-xl-size: 96px;
+  --type-display-xl-weight: 900;
+  --type-display-xl-line: 100px;
+  --type-display-xl-tracking: -0.04em;
+
+  /* display-lg — the Room Code (1.10) uses this */
+  --type-display-lg-size: 64px;
+  --type-display-lg-weight: 800;
+  --type-display-lg-line: 72px;
+  --type-display-lg-tracking: -0.02em;
+
+  /* headline-lg */
+  --type-headline-lg-size: 40px;
+  --type-headline-lg-weight: 800;
+  --type-headline-lg-line: 48px;
+  --type-headline-lg-tracking: normal;
+
+  /* headline-lg-mobile */
+  --type-headline-lg-mobile-size: 32px;
+  --type-headline-lg-mobile-weight: 800;
+  --type-headline-lg-mobile-line: 38px;
+  --type-headline-lg-mobile-tracking: normal;
+
+  /* body-lg */
+  --type-body-lg-size: 20px;
+  --type-body-lg-weight: 600;
+  --type-body-lg-line: 28px;
+  --type-body-lg-tracking: normal;
+
+  /* body-md — global body default */
+  --type-body-md-size: 16px;
+  --type-body-md-weight: 500;
+  --type-body-md-line: 24px;
+  --type-body-md-tracking: normal;
+
+  /* label-bold */
+  --type-label-bold-size: 14px;
+  --type-label-bold-weight: 700;
+  --type-label-bold-line: 16px;
+  --type-label-bold-tracking: normal;
+
+  /* ---------------------------------------------------------------------- */
+  /* Spacing (DESIGN.md Layout & Spacing) — 8px base; all rhythm is a multiple */
+  /* ---------------------------------------------------------------------- */
+  --space-base: 8px; /* base unit */
+  --space-stack-sm: 16px;
+  --space-gutter: 24px;
+  --space-stack-md: 32px; /* == container-padding */
+  --space-container-padding: 32px;
+  --space-stack-xl: 64px;
+
+  /* ---------------------------------------------------------------------- */
+  /* Radii (DESIGN.md Shapes) — chunky; pill for primary buttons             */
+  /* ---------------------------------------------------------------------- */
+  --radius-sm: 0.5rem; /* 8px */
+  --radius-default: 1rem; /* 16px */
+  --radius-md: 1.5rem; /* 24px — min for large containers/cards */
+  --radius-lg: 2rem; /* 32px */
+  --radius-xl: 3rem; /* 48px */
+  --radius-full: 9999px; /* pill — primary buttons */
+
+  /* ---------------------------------------------------------------------- */
+  /* Elevation & Depth (DESIGN.md) — tonal stack, NOT drop shadows.          */
+  /* Active/focused = 4px solid neon-mint stroke. Inert = 2px white @ 10%.    */
+  /* ---------------------------------------------------------------------- */
+  --stroke-active-width: 4px;
+  --stroke-active-color: var(--color-secondary-container); /* neon mint #36ffc4 */
+  --stroke-active: var(--stroke-active-width) solid var(--stroke-active-color);
+
+  --border-inert-width: 2px;
+  --border-inert-color: rgba(255, 255, 255, 0.1);
+  --border-inert: var(--border-inert-width) solid var(--border-inert-color);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Global brand baseline (AC-1.9a.3) — dark, portrait frame every surface    */
+/* inherits. No layout chrome, no persistent navigation.                     */
+/* ------------------------------------------------------------------------ */
+html,
+body {
+  margin: 0;
+  background: var(--color-surface);
+  color: var(--color-on-surface);
+  font-family: var(--font-family-body);
+  font-size: var(--type-body-md-size);
+  font-weight: var(--type-body-md-weight);
+  line-height: var(--type-body-md-line);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#app {
+  min-height: 100vh;
+  /* Honor the iOS safe-area (index.html sets viewport-fit=cover). */
+  min-height: 100dvh;
+}

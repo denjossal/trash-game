@@ -10,6 +10,12 @@ export default defineConfig({
     svelte(),
     VitePWA({
       registerType: "autoUpdate",
+      // Precache the locally-bundled fonts (Story 1.9a) alongside the default app-shell assets — the
+      // default globPatterns omit woff2, so without this the shell would re-fetch the fonts. (The full
+      // manifest copy + icons are Story 1.9b; this only ensures the 1.9a fonts ride the shell.)
+      workbox: {
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+      },
       // Minimal placeholder manifest — cleaned/warm copy + the two produced icons land in Story 1.9b/1.10.
       manifest: {
         name: "Trash",

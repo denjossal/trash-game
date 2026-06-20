@@ -1,0 +1,28 @@
+/*
+ * fonts.css — local @font-face declarations (Story 1.9a, AC-1.9a.2).
+ *
+ * Both typefaces are bundled LOCALLY under client/public/fonts/ (served from / by Vite and
+ * precached by vite-plugin-pwa) — NO Google Fonts <link>, NO CDN @import. A third-party font
+ * request would breach the $0 / privacy posture (G2 standing gate) and the offline app-shell goal.
+ *
+ * Both files are the official OFL (SIL Open Font License 1.1) VARIABLE fonts, so one file per family
+ * covers every weight the type scale uses (Anybody 700/800/900; Hanken Grotesk 500/600) — the
+ * `font-weight` RANGE below lets the browser supply each weight from the single variable file.
+ * [Source: DESIGN.md Typography; architecture.md#Complete-Project-Directory-Structure client/public/fonts/.]
+ */
+
+@font-face {
+  font-family: "Anybody";
+  font-style: normal;
+  font-weight: 700 900; /* display roles use 800/900; label-bold uses 700 */
+  font-display: swap;
+  src: url("/fonts/anybody-variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 500 600; /* body-md 500, body-lg 600 */
+  font-display: swap;
+  src: url("/fonts/hanken-grotesk-variable.woff2") format("woff2");
+}

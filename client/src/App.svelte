@@ -1,50 +1,54 @@
 <script lang="ts">
-  // SCOPE (Story 1.3): still a scaffold surface — App.svelte becomes the render-from-state
-  // surface router (ProjectedTableState -> exactly one surface) in Story 1.9a. No tokens/surfaces yet.
+  // App.svelte — the render-from-state surface ROUTER (Story 1.9a, UX-DR2).
   //
-  // Client half of the single-source-of-truth guarantee (Story 1.3 AC4): a single `Phase` literal
-  // only catches changes to that one literal. These `satisfies` bindings exercise EVERY field
-  // (incl. optionals) of the contract types the CLIENT touches over the wire — ProjectedTableState
-  // (received), Intent (sent), and ServerEvent (received, which transitively covers ErrorReason) —
-  // so adding, renaming, or removing ANY field of those breaks the client typecheck (svelte-check).
-  // TableState/Round are server-only and intentionally NOT anchored here. Type-only scaffold values —
-  // replaced by real render-from-state in 1.9a.
-  import type { Card, Intent, ProjectedTableState, ServerEvent } from "@trash/shared";
+  // It renders EXACTLY ONE surface as a pure function of the current ProjectedTableState (or none yet)
+  // via routeFromState — no persistent navigation, no router library, no client-held "current screen"
+  // that can drift from state. On any reconnect/resume the device re-derives its surface from state
+  // alone (architecture.md "enshrined experience invariant").
+  //
+  // SCOPE (Story 1.9a): the router SKELETON + surface stubs. The live data pipe — socket.ts's receive
+  // loop feeding a read-only tableState store — is Story 1.10, when the real Home/Lobby surfaces exist
+  // to drive create/join. So `state` is a local null here; routing is a pure function of whatever
+  // state is injected, which is exactly what lets 1.10 drop the live store in without touching routing.
+  import type { ProjectedTableState } from "@trash/shared";
+  import { routeFromState } from "./route-from-state";
+  import "./wire-anchor"; // side-effect import — keeps the Story 1.3 client wire-contract typecheck gate live.
 
-  const _card = { rank: 1, suit: "♠" } satisfies Card;
+  import Home from "./surfaces/Home.svelte";
+  import Lobby from "./surfaces/Lobby.svelte";
+  import YourTurn from "./surfaces/YourTurn.svelte";
+  import Waiting from "./surfaces/Waiting.svelte";
+  import Showdown from "./surfaces/Showdown.svelte";
+  import RoundResult from "./surfaces/RoundResult.svelte";
+  import Eliminated from "./surfaces/Eliminated.svelte";
+  import Winner from "./surfaces/Winner.svelte";
 
-  const projection = {
-    code: "",
-    phase: "lobby",
-    hostId: "",
-    startingLives: 0,
-    you: {
-      playerId: "",
-      isHost: false,
-      isAlive: false,
-      isConnected: false,
-      isLastPlayer: false,
-      hand: _card,
-    },
-    players: [{ id: "", name: "", lives: 0, isAlive: false, isConnected: false, seatIndex: 0, hand: _card }],
-    currentTurnId: "",
-    turnToken: 0,
-    phaseToken: 0,
-    revealed: false,
-    loserIds: [""],
-    winnerIds: [""],
-    justReceivedSwap: false,
-  } satisfies ProjectedTableState;
+  // Story 1.10 replaces this with the read-only store fed by socket.ts; the router below is unchanged.
+  const state: ProjectedTableState | null = $state(null);
 
-  // One representative member of each wire union the client produces/consumes, so a change to any
-  // Intent/ServerEvent/ErrorReason member breaks the client typecheck too.
-  const _intent = { type: "swap", payload: { turnToken: 0 } } satisfies Intent;
-  const _event = { type: "error", payload: { reason: "stale-turn" } } satisfies ServerEvent;
-  void _intent;
-  void _event;
+  const surface = $derived(routeFromState(state));
 </script>
 
-<main>
-  <h1>Trash</h1>
-  <p>Scaffold ready (phase {projection.phase}).</p>
-</main>
+{#if surface === "home"}
+  <Home />
+{:else if surface === "lobby"}
+  <Lobby state={state!} />
+{:else if surface === "yourTurn"}
+  <YourTurn state={state!} />
+{:else if surface === "waiting"}
+  <Waiting state={state!} />
+{:else if surface === "showdown"}
+  <Showdown state={state!} />
+{:else if surface === "roundResult"}
+  <RoundResult state={state!} />
+{:else if surface === "eliminated"}
+  <Eliminated state={state!} />
+{:else if surface === "winner"}
+  <Winner state={state!} />
+{:else}
+  <!-- Defensive fallback: routeFromState is exhaustively typed over Surface, so this is
+       unreachable today. It exists so a future Surface added to the union but missed here
+       (the router + this chain are two hand-synced lists) fails to a safe neutral frame
+       instead of rendering nothing. -->
+  <Home />
+{/if}
