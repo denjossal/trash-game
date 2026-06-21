@@ -120,4 +120,27 @@ export default tseslint.config(
       ],
     },
   },
+
+  // GATE 2 test-file exemption — co-located rules tests (architecture.md: `rules/*.test.ts`).
+  // The PURITY SYNTAX BANS stay fully in force (a test still cannot smuggle crypto/Date/Math.random/
+  // this/etc. into the pure graph — `no-restricted-syntax: rulesPurityBans` is inherited from GATE 2).
+  // We relax ONLY the import allowlist so a test may import its test runner (`vitest`); same-tree `./`
+  // engine imports and @trash/shared remain allowed, and `../` escapes into impure server modules stay
+  // banned. This is the narrowest exemption that makes the architecture's co-located rules tests possible.
+  {
+    files: ["server/src/rules/**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^(?!@trash/shared(/.*)?$|\\./|vitest$).*",
+              message: "rules/** tests may import ONLY @trash/shared, same-tree ./ paths, or vitest (purity boundary — no ../ escapes, no other impure modules).",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );
