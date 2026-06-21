@@ -113,6 +113,28 @@ export function buildHostSetLivesIntent(lives: number, phaseToken: number): Extr
   return { type: "hostSetLives", payload: { phaseToken, lives } };
 }
 
+// --- Story 2.4: swap / keep send builders (the turn-scoped intents) ---
+//
+// The active Player's two choices carry the turn token they believe current (frozen payload
+// `{turnToken}`); the server's two-scope guard (Story 2.2) rejects a stale/double-tapped copy with
+// `stale-turn`, which the client swallows silently (table-store.svelte.ts). Builders only — the Your
+// Turn surface (Story 2.4) mounts these on the live socket via the table-store send seams. [types.ts.]
+
+// The Intent union groups swap/keep/drawFromDeck in ONE member (shared {turnToken} payload), so an
+// Extract by a single literal is `never`. Extract the grouped member and let the literal `type` narrow.
+type TurnIntent = Extract<Intent, { type: "swap" | "keep" | "drawFromDeck" }>;
+
+/** Build a `swap` intent (frozen payload `{turnToken}`). The active Player exchanges with the Player to
+ *  their right. The Your Turn surface supplies the current round's `turnToken` from the projection. */
+export function buildSwapIntent(turnToken: number): TurnIntent {
+  return { type: "swap", payload: { turnToken } };
+}
+
+/** Build a `keep` intent (frozen payload `{turnToken}`). The active Player retains their Card. */
+export function buildKeepIntent(turnToken: number): TurnIntent {
+  return { type: "keep", payload: { turnToken } };
+}
+
 /**
  * Send a built intent on an already-open, kept-alive socket (the lobby keeps its socket open after
  * create/join). Thin builder-level helper so the Host Lobby surface (Story 1.10) can post a hostSetLives

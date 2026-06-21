@@ -1,4 +1,7 @@
 # generated: 2026-06-19
+# last_updated: 2026-06-20 (2-4 → review dev-story: swap/keep — pure applySwap/applyKeep (reuse nextAliveSeat, unconditional King-free exchange), handleSwap/handleKeep first TURN-scope consumer w/ #123 null-round gate + no-persist, justReceivedSwap value-free producer (memory-only Round.lastSwapReceiverId), real YourTurn 2-button hero + Waiting surfaces + sendSwap/sendKeep; King social-only behavioral standing test; +23 server/+13 client tests; allActed deferred to 2.6; gates green)
+# last_updated: 2026-06-20 (2-4 → in-progress dev-story)
+# last_updated: 2026-06-20 (2-4 → ready-for-dev create-story: first full-stack gameplay slice — pure applySwap/applyKeep reusing nextAliveSeat, handleSwap/handleKeep on the TURN scope (checkTurnToken/bumpTurnToken first consumer, not-your-turn, null-round gate #123, no-persist), justReceivedSwap value-free producer, King social-only standing test (FR-8); real YourTurn (2-button hero ≥72px+pulse frame+a11y) & Waiting surfaces + sendSwap/sendKeep seams; allActed deferred to 2.6, peek reveal to 2.5)
 # last_updated: 2026-06-20 (2-3 → done code-review: all 4 ACs satisfied, 1 patch applied (handler header guard-order comment), 3 deferred (engine-primitive reuse robustness), 5 dismissed; gates green)
 # last_updated: 2026-06-20 (2-3 → review dev-story: deal handler — pure dealRound+nextAliveSeat, assertDealable (#8/#9), first live guard→mutate→bump→persist chokepoint, case "deal"+fanOut; +21 server tests, SM-6 holds, round memory-only; server-only, gates green)
 # last_updated: 2026-06-20 (2-3 → in-progress dev-story)
@@ -97,7 +100,7 @@ development_status:
   2-1-deck-build-and-seeded-shuffle-pure-parameterized: done
   2-2-two-scope-monotonic-guard-built-whole: done
   2-3-deal-secret-cards-and-simultaneous-dealt-state: done
-  2-4-take-a-turn-swap-or-keep-the-two-button-hero: backlog
+  2-4-take-a-turn-swap-or-keep-the-two-button-hero: review
   2-5-peek-your-own-card: backlog
   2-6-last-player-option-swap-or-draw-from-the-deck: backlog
   epic-2-retrospective: optional

@@ -70,11 +70,19 @@ export function projectStateFor(state: TableState, playerId: string): ProjectedT
   };
   // currentTurnId/turnToken exist only while a round does — omit (optional) otherwise. Their
   // presence depends on round existence (a PHASE fact), never on a hidden card value, so this does
-  // not breach the constant-shape invariant. loserIds/winnerIds/justReceivedSwap are Epic 3 / 2.4
-  // beats — no code sets them yet, so they are omitted entirely this story.
+  // not breach the constant-shape invariant. loserIds/winnerIds are Epic 3 beats — no code sets them
+  // yet, so they are omitted entirely this story.
   if (round) {
     projection.currentTurnId = round.currentTurnId;
     projection.turnToken = round.turnToken;
+    // justReceivedSwap (Story 2.4, AR-7): the VALUE-FREE squirm signal — TRUE only on the device of the
+    // player who just received a swapped Card (round.lastSwapReceiverId, a memory-only transient set by
+    // applySwap). It carries NO card data: the receiver still sees only its own hand (above), so this
+    // re-passes SM-6. Omit-when-absent — set the key ONLY when true; a non-receiver / post-keep / fresh
+    // deal projection has no `justReceivedSwap` key at all. [Source: architecture.md line 374; types.ts.]
+    if (round.lastSwapReceiverId === playerId) {
+      projection.justReceivedSwap = true;
+    }
   }
 
   return projection;
@@ -82,17 +90,15 @@ export function projectStateFor(state: TableState, playerId: string): ProjectedT
 
 // Server half of the single-source-of-truth guarantee (Story 1.3 AC4), preserved for the contract
 // fields the real body above does NOT yet construct. The body now structurally consumes most of
-// ProjectedTableState/Player/Round/Card, so the standalone _state/_projection scaffolding was
-// removed in 1.4 — but `loserIds`/`winnerIds`/`justReceivedSwap` are Epic 3 / 2.4 beats this story
-// leaves unset, so without this binding a rename of any of them would NOT break the server
-// typecheck. This `satisfies` literal exercises exactly those three (plus the nested Card it carries
-// is already covered by `round.hands` reads above). Type-only — never executed, never serialized.
-// Remove once a real producer (Epic 2/3 handlers) structurally sets these three fields.
+// ProjectedTableState/Player/Round/Card — including `justReceivedSwap` (Story 2.4, set above from
+// round.lastSwapReceiverId), so that field is no longer scaffolded here. `loserIds`/`winnerIds` remain
+// Epic 3 beats this story leaves unset, so without this binding a rename of either would NOT break the
+// server typecheck. This `satisfies` literal exercises exactly those two. Type-only — never executed,
+// never serialized. Remove once a real producer (Epic 3 handlers) structurally sets these two fields.
 const _beats = {
   loserIds: [""],
   winnerIds: [""],
-  justReceivedSwap: false,
-} satisfies Pick<ProjectedTableState, "loserIds" | "winnerIds" | "justReceivedSwap">;
+} satisfies Pick<ProjectedTableState, "loserIds" | "winnerIds">;
 void _beats;
 
 // SSoT for the `Round` fields the body does NOT read. The projection consumes `round.revealed`,

@@ -17,6 +17,8 @@ import type { ProjectedTableState } from "@trash/shared";
 import type { PartySocket } from "partysocket";
 import {
   buildHostSetLivesIntent,
+  buildKeepIntent,
+  buildSwapIntent,
   createRoomWithRetry,
   joinRoomAndListen,
   sendIntent,
@@ -101,6 +103,26 @@ export async function joinTable(code: string, name: string): Promise<void> {
 export function sendHostSetLives(lives: number, phaseToken: number): void {
   if (liveSocket === null) return;
   sendIntent(liveSocket, buildHostSetLivesIntent(lives, phaseToken));
+}
+
+/**
+ * The active Player SWAPS — exchange Cards with the Player to their right (Story 2.4, FR-6). Sends
+ * `swap{turnToken}` on the live socket via the GATE-1-exempt `sendIntent` (NEVER socket.send from a
+ * surface). The server validates the turn token + current-turn ownership, applies the exchange, and
+ * fans out a fresh tableState every device re-renders from; a stale/double-tap is rejected with
+ * `stale-turn` and swallowed silently (handleSocketMessage drops error envelopes — AC-2.2.3). The
+ * Your Turn surface passes the current round's `turnToken` from the projection. No-op without a socket.
+ */
+export function sendSwap(turnToken: number): void {
+  if (liveSocket === null) return;
+  sendIntent(liveSocket, buildSwapIntent(turnToken));
+}
+
+/** The active Player KEEPS — retain the Card and pass the Turn right (Story 2.4, FR-6). Same send seam
+ *  as sendSwap; fire-and-forget (the server's fan-out drives the re-render). No-op without a socket. */
+export function sendKeep(turnToken: number): void {
+  if (liveSocket === null) return;
+  sendIntent(liveSocket, buildKeepIntent(turnToken));
 }
 
 /** TEST-ONLY: reset the store + socket between cases. Not used by production code. */

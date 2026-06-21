@@ -152,3 +152,56 @@ test("2.3: a dealt round projects the caller's own hand and omits every other se
   // No seat in players[] carries a hand while hidden (self's card lives only in you.hand).
   for (const entry of projection.players) expect("hand" in entry).toBe(false);
 });
+
+// ---------------------------------------------------------------------------
+// Story 2.4 — the value-free squirm signal. After a swap, the RECEIVER (round.lastSwapReceiverId)
+// gets `you.justReceivedSwap: true` on its OWN projection — carrying NO card data (re-passes SM-6
+// for the new producer; the projected `justReceivedSwap` field already exists in the contract).
+// ---------------------------------------------------------------------------
+
+test("2.4: the swap RECEIVER's projection sets justReceivedSwap=true and STILL leaks no other card (SM-6 re-pass)", () => {
+  const handA: Card = { rank: 6, suit: "♠" };
+  const handB: Card = { rank: 9, suit: "♥" };
+  const handC: Card = { rank: 12, suit: "♦" };
+  const state = tableWithHands({ A: handA, B: handB, C: handC });
+  // Simulate the post-swap memory-only transient: B just received a swapped card.
+  state.round!.lastSwapReceiverId = "B";
+
+  const projection = JSON.parse(JSON.stringify(projectStateFor(state, "B")));
+
+  // The value-free squirm flag (TOP-LEVEL field, per the frozen contract) is set for the receiver...
+  expect(projection.justReceivedSwap).toBe(true);
+  // ...and the receiver still sees ONLY its own card; no other seat's value leaks (SM-6 holds).
+  expect(projection.you.hand).toEqual(handB);
+  const values = new Set<unknown>();
+  collectValues(projection, values);
+  expect(values.has(handA.rank)).toBe(false);
+  expect(values.has(handC.rank)).toBe(false);
+  for (const entry of projection.players) expect("hand" in entry).toBe(false);
+});
+
+test("2.4: a NON-receiver's projection has justReceivedSwap falsy (no squirm flash for the wrong device)", () => {
+  const state = tableWithHands({
+    A: { rank: 6, suit: "♠" },
+    B: { rank: 9, suit: "♥" },
+    C: { rank: 12, suit: "♦" },
+  });
+  state.round!.lastSwapReceiverId = "B"; // B received the swap — A and C did not.
+
+  const projA = JSON.parse(JSON.stringify(projectStateFor(state, "A")));
+  const projC = JSON.parse(JSON.stringify(projectStateFor(state, "C")));
+
+  // Omit-when-absent: the flag is either absent or false for a non-receiver — never true.
+  expect(projA.justReceivedSwap ?? false).toBe(false);
+  expect(projC.justReceivedSwap ?? false).toBe(false);
+});
+
+test("2.4: no swap transient (lastSwapReceiverId unset) → justReceivedSwap is omitted entirely", () => {
+  const state = tableWithHands({
+    A: { rank: 6, suit: "♠" },
+    B: { rank: 9, suit: "♥" },
+  });
+  // lastSwapReceiverId is unset (fresh deal / post-keep).
+  const projection = JSON.parse(JSON.stringify(projectStateFor(state, "A")));
+  expect("justReceivedSwap" in projection).toBe(false);
+});

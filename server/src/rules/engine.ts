@@ -125,3 +125,59 @@ export function dealRound(
     revealed: false,
   };
 }
+
+/**
+ * The seat to the caller's RIGHT — both the swap target AND the next turn-actor are this same seat
+ * ("Player to your right"). Looks the caller's seatIndex up from the LIVE roster (never trusted from
+ * the wire) and delegates to {@link nextAliveSeat} (Story 2.3 — the SINGLE rotation primitive, reused
+ * here, not reimplemented). The caller is always the current-turn player (the handler's `not-your-turn`
+ * check guarantees a real, alive, seated caller), so the unknown-`fromSeatIndex` edge (deferred-work #7)
+ * is unreachable from this path. PURE.
+ */
+function rightHandNeighbor(callerPlayerId: string, players: Player[]): string {
+  const callerSeat = players.find((p) => p.id === callerPlayerId)?.seatIndex ?? -1;
+  return nextAliveSeat(players, callerSeat);
+}
+
+/**
+ * KEEP (Story 2.4, AC-2.4.4): the active Player retains their Card. PURE mutator on `round` — appends
+ * the caller to `round.acted` and advances `round.currentTurnId` to the right-hand neighbor (the Turn
+ * passes right). Does NOT touch `hands`.
+ *
+ * The `turns → allActed` transition is NOT computed here — `allActed` is owned by Story 2.6 (the
+ * Last-Player turn, which also adds `drawFromDeck`); 2.4 advances the turn for non-final seats and the
+ * contract names `allActed` as 2.6-emits / 3.2-consumes. So Keep ALWAYS advances `currentTurnId` to the
+ * next alive seat; do NOT add last-seat / allActed handling here. [types.ts Phase; epics.md#Story 2.6.]
+ */
+export function applyKeep(round: Round, callerPlayerId: string, players: Player[]): void {
+  delete round.lastSwapReceiverId; // a new turn action clears the prior swap's squirm transient.
+  round.acted.push(callerPlayerId);
+  round.currentTurnId = rightHandNeighbor(callerPlayerId, players);
+}
+
+/**
+ * SWAP (Story 2.4, AC-2.4.3): the active Player EXCHANGES Cards with the Player to their right (each
+ * then holds the other's former Card; everyone still holds exactly one). PURE mutator on `round`:
+ * exchange `hands[caller]` ↔ `hands[neighbor]`, append the caller to `acted`, advance `currentTurnId`
+ * to that same neighbor (the Turn passes right to the swap target).
+ *
+ * SM-6 / FR-8 (AC-2.4.6) — THE EXCHANGE IS UNCONDITIONAL. There is NO read of any Card's `rank`/`suit`
+ * to decide whether the swap is allowed, and NO King-specific branch: the swap is a plain value
+ * exchange of two Card objects, never a value comparison. The King being un-dumpable is a SOCIAL
+ * convention the app enforces NOWHERE. This also keeps the handler timing-indistinguishable by card
+ * value (deferred-work #54 (b)): the work is constant regardless of the cards' ranks.
+ */
+export function applySwap(round: Round, callerPlayerId: string, players: Player[]): void {
+  const neighbor = rightHandNeighbor(callerPlayerId, players);
+  // Unconditional exchange — no rank/suit read, no King branch (FR-8 / SM-6).
+  const callerCard = round.hands[callerPlayerId];
+  round.hands[callerPlayerId] = round.hands[neighbor];
+  round.hands[neighbor] = callerCard;
+  round.acted.push(callerPlayerId);
+  round.currentTurnId = neighbor;
+  // The squirm transient (AR-7, value-free): the neighbor just got dumped on. Memory-only; the
+  // projector turns this into the per-device `you.justReceivedSwap` flag (no card data). The next
+  // accepted turn action supersedes any prior value: applySwap OVERWRITES it here with the new
+  // receiver, applyKeep deletes it — so it never carries a stale receiver across turns.
+  round.lastSwapReceiverId = neighbor;
+}
