@@ -1,4 +1,9 @@
 # generated: 2026-06-19
+# last_updated: 2026-06-20 (2-1 → done code-review: all 4 ACs satisfied, 0 patches, 4 input-contract gaps deferred to 2.2/5.1)
+# last_updated: 2026-06-20 (2-1 → in-progress → review dev-story: pure buildDeck+shuffle, crypto rng seam, +13 tests, narrow GATE2 test exemption)
+# last_updated: 2026-06-20 (epic-2 → in-progress; 2-1 → ready-for-dev create-story — first Epic 2 story)
+# last_updated: 2026-06-20 (epic-1-retrospective → done: retro saved epic-1-retro-2026-06-20.md — Epic 1 fully closed)
+# last_updated: 2026-06-20 (1-1 → done code-review: review closed, 3 cosmetic patches WONT-FIX on throwaway spike — Epic 1 now fully done)
 # last_updated: 2026-06-20 (1-11 → ready-for-dev create-story; → in-progress → review dev-story; → done code-review)
 # (1-4 → review 2026-06-19; → done 2026-06-19 code-review)
 # (1-5 → ready-for-dev 2026-06-19 create-story; → in-progress → review 2026-06-19 dev-story; → done 2026-06-19 code-review)
@@ -65,7 +70,7 @@ development_status:
 
   # --- Epic 1: Get to a Table together ---
   epic-1: in-progress
-  1-1-pre-build-spike-go-no-go-on-the-durable-object-premise: review
+  1-1-pre-build-spike-go-no-go-on-the-durable-object-premise: done
   1-2-ac-driven-project-initialization: done
   1-3-shared-wire-contract-full-state-shape-up-front: done
   1-4-privacy-chokepoint-standing-sm6-negative-assertion-test: done
@@ -77,11 +82,11 @@ development_status:
   1-9b-pwa-shell-voice-primitives-and-interaction-safety: done
   1-10-home-and-lobby-surfaces: done
   1-11-room-garbage-collection-zero-cost-backstop: done
-  epic-1-retrospective: optional
+  epic-1-retrospective: done
 
   # --- Epic 2: Play a Round ---
-  epic-2: backlog
-  2-1-deck-build-and-seeded-shuffle-pure-parameterized: backlog
+  epic-2: in-progress
+  2-1-deck-build-and-seeded-shuffle-pure-parameterized: done
   2-2-two-scope-monotonic-guard-built-whole: backlog
   2-3-deal-secret-cards-and-simultaneous-dealt-state: backlog
   2-4-take-a-turn-swap-or-keep-the-two-button-hero: backlog

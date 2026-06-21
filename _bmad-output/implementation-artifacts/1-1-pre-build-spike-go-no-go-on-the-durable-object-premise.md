@@ -4,7 +4,7 @@ baseline_commit: NO_VCS
 
 # Story 1.1: Pre-build spike — go/no-go on the Durable Object premise
 
-Status: review — GO recorded; gate satisfied. Code review 2026-06-19 raised 3 NON-BLOCKING cosmetic action items (see Review Findings) + 4 deferred follow-ups; none reopen the go/no-go gate, so Story 1.2 stays unblocked.
+Status: done — GO recorded; gate satisfied. Review closed 2026-06-20: the 3 open NON-BLOCKING cosmetic action items are marked WON'T-FIX (they target the throwaway, gitignored `spike/` code that must never enter the repo and is slated for deletion); the substantive AC3 finding already shipped as the Story 1.11 GC correction. Gate-and-stop satisfied; Epic 1 complete.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -70,10 +70,12 @@ Then the findings doc records the **observed** free-tier behavior at build time:
 ### Review Findings
 
 > Code review 2026-06-19 (Amelia). 3-layer adversarial (Blind Hunter / Edge Case Hunter / Acceptance Auditor). Calibrated as a THROWAWAY spike: bar is probe-fidelity-vs-AC, not production hardening. No `decision-needed`. Overall GO decision is **defensible and not overturned** — the findings doc is honest about every gap; these items concern probe code emitting verdict strings stronger than what was observed.
+>
+> **Review closed 2026-06-20 (Amelia).** The 3 `[Review][Patch]` items below are resolved as **WON'T-FIX**: they target throwaway, gitignored `spike/src/*.ts` probe code that (per the story type) must never enter the repo and is slated for deletion. Fixing verdict-string cosmetics in deletion-bound code has no durable value, and none of the three affects the recorded GO or any shipped artifact. The findings doc already uses the correct probe names and honestly records every gap.
 
-- [ ] [Review][Patch] Probe-name mismatch: `index.ts` advertises `reload/gc/ws`; router implements `inspect/reload-coerce/gc-probe` [spike/src/index.ts:19; spike/src/table-server.ts:66-79] — a tester following the in-code 404 hint gets `unknown probe` 404s. Findings doc uses the correct names.
-- [ ] [Review][Patch] Misleading "hibernation-eligible" claim contradicts the spike's own AC3 finding [spike/src/table-server.ts:217,221] — the socket is standard-mode and invisible to `getWebSockets()`; the comment/WS message asserts the opposite of what the spike proved.
-- [ ] [Review][Patch] Path-parsing trap: `/parties/table/claim` (room code omitted) claims a DO literally named "claim" and returns a real `CLAIMED_NOW` against the wrong identity [spike/src/table-server.ts:62,84-113] — `code` echo doesn't validate it looks like a room code.
+- [x] [Review][Patch][WONT-FIX] Probe-name mismatch: `index.ts` advertises `reload/gc/ws`; router implements `inspect/reload-coerce/gc-probe` [spike/src/index.ts:19; spike/src/table-server.ts:66-79] — a tester following the in-code 404 hint gets `unknown probe` 404s. Findings doc uses the correct names. (Throwaway code; findings doc is the durable source of truth.)
+- [x] [Review][Patch][WONT-FIX] Misleading "hibernation-eligible" claim contradicts the spike's own AC3 finding [spike/src/table-server.ts:217,221] — the socket is standard-mode and invisible to `getWebSockets()`; the comment/WS message asserts the opposite of what the spike proved. (Throwaway code; the correct AC3 finding is recorded in the findings doc and shipped as the Story 1.11 correction.)
+- [x] [Review][Patch][WONT-FIX] Path-parsing trap: `/parties/table/claim` (room code omitted) claims a DO literally named "claim" and returns a real `CLAIMED_NOW` against the wrong identity [spike/src/table-server.ts:62,84-113] — `code` echo doesn't validate it looks like a room code. (Throwaway probe with no untrusted callers; real claim-path validation lives in product code from Story 1.6 onward.)
 - [x] [Review][Defer] AC2 false-PASS: `/inspect` & `/reload-coerce` emit PASS/`coerced:true` purely from `round===null`, which is true on any warm/cold/fresh instance — doesn't prove a restart caused it [spike/src/table-server.ts:159-166,172-197] — deferred; findings doc honestly records the cold-restart half as an optional user step. No durable-artifact correction needed (spike is throwaway).
 - [x] [Review][Defer] AC3 `getWebSockets()` reads 0 under partyserver default `hibernate:false`; preserve-branch is dead code; zero-socket-only run looks like a clean PASS [spike/src/table-server.ts:202-215,225-234] — deferred; this IS the recorded AC3 defect + Story 1.11 correction. Pre-existing/known.
 - [x] [Review][Defer] AC3 `alarm()` GC decision never fired/observed in the deployed run (60s alarm not awaited) [spike/src/table-server.ts:225-234] — deferred; tied to the Story 1.11 GC correction.
