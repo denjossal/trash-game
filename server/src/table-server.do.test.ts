@@ -332,21 +332,23 @@ test("AC-1.7.5: concurrently-fired joins stay correct (no duplicate seatIndex, n
   const guests = await Promise.all(Array.from({ length: N }, () => openConn("RACE")));
   guests.forEach((g, i) => g.send({ type: "joinRoom", payload: { code: "RACE", name: `G${i}` } }));
 
-  // Each guest receives at least its own join projection (and interleaved fan-outs). Drain one event per
-  // guest to be sure every join was processed before we inspect the authoritative roster. (Message
-  // ARRIVAL order across sockets is not deterministic — so we assert against the DO's own final state,
-  // not against whichever fan-out a given socket happened to see first.)
-  await Promise.all(guests.map((g) => g.next()));
-
-  // Inspect the DO's AUTHORITATIVE final roster via the persisted "table" summary (every join persists,
-  // so the durable record reflects all of them) — the single-turn correctness invariant: host + N
-  // guests, no overflow, no duplicate seatIndex, contiguous 0..N. Reading storage (not the private
-  // in-memory field) keeps this assertion against the durable source of truth.
+  // Wait until every join has COMMITTED to the authoritative roster before asserting. We poll the DO's
+  // persisted roster up to 1+N rather than draining "one event per guest": a guest's first received event
+  // may be an interleaved fan-out from an EARLIER join (not its own), and under WebSocket Hibernation the
+  // upgrade/delivery pipeline is staggered enough that one-event-per-guest no longer coincides with
+  // all-joins-committed. Polling the durable source of truth removes that delivery-timing coupling while
+  // keeping the invariant under test unchanged. [Story 1.11: hibernation accept staggers WS delivery.]
   const stub = env.Table.get(env.Table.idFromName("RACE"));
-  const seats = await runInDurableObject(stub, async (_instance, state) => {
-    const summary = await state.storage.get<{ players: { seatIndex: number }[] }>("table");
-    return (summary?.players ?? []).map((p) => p.seatIndex).sort((a, b) => a - b);
-  });
+  const readSeats = () =>
+    runInDurableObject(stub, async (_instance, state) => {
+      const summary = await state.storage.get<{ players: { seatIndex: number }[] }>("table");
+      return (summary?.players ?? []).map((p) => p.seatIndex).sort((a, b) => a - b);
+    });
+  let seats = await readSeats();
+  for (let tries = 0; tries < 50 && seats.length < 1 + N; tries++) {
+    await new Promise((r) => setTimeout(r, 20));
+    seats = await readSeats();
+  }
 
   expect(seats.length).toBe(1 + N);
   expect(seats.length).toBeLessThanOrEqual(MAX_PLAYERS);
