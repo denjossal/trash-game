@@ -16,4 +16,7 @@ declare module "cloudflare:test" {
     stub: DurableObjectStub<O>,
     callback: (instance: O, state: DurableObjectState) => R | Promise<R>,
   ): Promise<R>;
+  // Immediately run (and remove) the DO's scheduled alarm, if any; returns true if an alarm ran. Story
+  // 1.11 uses it to fire the idle GC alarm without waiting the 3h IDLE_TTL_MS wall-clock. [pool-workers API.]
+  export function runDurableObjectAlarm(stub: DurableObjectStub): Promise<boolean>;
 }

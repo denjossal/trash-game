@@ -20,3 +20,11 @@ export const ROOM_CODE_LEN = 4;
 
 /** Idle GC TTL — the DO self-deletes after this long with no active connections (D7). */
 export const IDLE_TTL_MS = 3 * 60 * 60 * 1000; // 3 hours
+
+/**
+ * Debounce window for re-arming the idle GC alarm. The DO re-arms the IDLE_TTL_MS alarm on activity, but
+ * only if more than this long has elapsed since the last arm — so a burst of intents does not rewrite the
+ * alarm on every message (per-intent setAlarm write amplification). Over-arming is harmless (the TTL only
+ * needs to be safe-by-margin); this just caps the write rate. [Source: architecture.md#D7.]
+ */
+export const ALARM_REARM_DEBOUNCE_MS = 5 * 60 * 1000; // 5 minutes

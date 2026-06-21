@@ -5,15 +5,20 @@
 // (onStart hydrate, onConnect, onMessage parse, onClose presence), delegating to dispatch → handlers →
 // persistence → push-state. The DO holds the authoritative TableState as an instance field (cache); the
 // durable summary in ctx.storage["table"] is the source of truth (Init AC5 — instance fields are
-// cache-only; hibernation wipes them). The phase machine (Epics 2–4) and the DO alarm GC (1.11) are later.
+// cache-only; hibernation wipes them). The phase machine (Epics 2–4) arrives later.
 //
 // Init AC5: authoritative Table state persists to ctx.storage; DO instance fields are cache-only. The
 // in-flight `round` is intentionally memory-only (null in lobby) and is never persisted (D2).
 //
-// HIBERNATION: deliberately NOT enabled this story (no `static options = { hibernate: true }`). The
-// hibernation-accept mode + the GC connection-probe are Story 1.11's job (the Story 1.1 spike found
-// ctx.getWebSockets() reads 0 for standard-mode sockets); enabling it here would couple 1.6 to GC/
-// billing. Default standard accept mode. [Source: 1-1-spike-findings AC3 → Story 1.11.]
+// HIBERNATION (Story 1.11): ENABLED via `static options = { hibernate: true }`. This makes partyserver
+// accept sockets through the native ctx.acceptWebSocket(), which (a) keeps live sockets visible to the GC
+// connection probe and (b) stops GB-s accruing for idle connections (NFR-3/SM-7). The Story 1.1 spike
+// proved the inverse: under the standard-accept default, ctx.getWebSockets() reads 0 for a room full of
+// live players, so an uncorrected probe would DELETE A LIVE ROOM. The GC probe (onAlarm) counts
+// [...this.connections()].length — partyserver's getConnections() filters to OPEN sockets, so a socket in
+// CLOSING state is not miscounted as active (the raw ctx.getWebSockets() does NOT filter readyState). The
+// AC-1.11.2 integration check confirms hibernation actually wires acceptWebSocket() for this partyserver
+// version. [Source: 1-1-spike-findings AC3; architecture.md#D7.]
 //
 // WATCH (architecture watch-list): peel connection/session mgmt into connections.ts only if WS-lifecycle
 // code grows. Re-evaluated for 1.7: onClose adds one thin presence flip (delegated to handlers.markDisconnected)
@@ -21,15 +26,24 @@
 // or host-controls (Epic 4) grow it.
 import type { Connection, WSMessage } from "partyserver";
 import { Server } from "partyserver";
-import type { Intent, TableState } from "@trash/shared";
+import { ALARM_REARM_DEBOUNCE_MS, IDLE_TTL_MS, type Intent, type TableState } from "@trash/shared";
 import { dispatch } from "./dispatch.js";
 import { markDisconnected, type ConnectionState, type TableHost } from "./handlers.js";
 import { loadSummary, reconcileSummaryToState } from "./persistence.js";
 import { fanOut } from "./push-state.js";
 
 export class TableServer extends Server<Record<string, never>> implements TableHost {
+  // Enable WebSocket Hibernation (Story 1.11): sockets are accepted via the native ctx.acceptWebSocket(),
+  // so ctx.getWebSockets() reflects live connections (accurate GC probe) and idle GB-s stop accruing.
+  static options = { hibernate: true };
+
   // Authoritative in-memory TableState (cache; null until claimed). handlers.ts is the ONLY writer.
   table: TableState | null = null;
+
+  // Wall-clock time the idle GC alarm was last armed (cache-only; reset to null on wake — safe, since the
+  // next activity simply re-arms; over-arming is harmless, only under-arming would be risky — D7). Used to
+  // debounce re-arms so a burst of intents does not rewrite the alarm on every message.
+  #lastAlarmArmedAt: number | null = null;
 
   /** The DO storage handle for the single durable "table" key (D2). Exposes ctx.storage to TableHost. */
   get storage(): DurableObjectStorage {
@@ -60,9 +74,11 @@ export class TableServer extends Server<Record<string, never>> implements TableH
    * side; only identity issuance ships). [Source: architecture.md D3 round-trip; D4 reconnection deferred.]
    */
   override onConnect(): void {
-    // Intentionally empty: create/join intents drive the first projection (the fan-out includes the
-    // joining socket). Bare-connect re-projection is the deferred reconnection FLOW. (A subclass override
-    // may declare fewer parameters than the base onConnect(connection, ctx).)
+    // No state mutation / projection here (create/join intents drive the first projection; the fan-out
+    // includes the joining socket). Bare-connect re-projection is the deferred reconnection FLOW. We DO
+    // arm the idle GC alarm: an opened socket is activity, so the room is live and the idle TTL clock
+    // (re)starts. Debounced, so reconnect storms don't write-amplify. [Story 1.11 AC-1.11.1.]
+    this.armIdleAlarm();
   }
 
   /**
@@ -84,6 +100,10 @@ export class TableServer extends Server<Record<string, never>> implements TableH
       return; // not an intent envelope — drop.
     }
     await dispatch(this, connection, intent);
+    // A handled inbound message is activity — refresh the idle TTL (debounced). dispatch swallows
+    // IntentErrors into a targeted `error`, so this also runs for a benignly-rejected intent; that is fine,
+    // the socket is open and the room is genuinely active (and the debounce caps the write rate anyway).
+    this.armIdleAlarm();
   }
 
   /**
@@ -116,5 +136,56 @@ export class TableServer extends Server<Record<string, never>> implements TableH
    */
   connections(): Iterable<Connection<ConnectionState>> {
     return this.getConnections<ConnectionState>();
+  }
+
+  /**
+   * Arm the idle GC alarm for `now + IDLE_TTL_MS`, DEBOUNCED: skip if we armed within the last
+   * ALARM_REARM_DEBOUNCE_MS, so a burst of intents/connections does not rewrite the alarm on every message
+   * (no per-intent setAlarm write amplification — D7). Called on activity (onConnect, post-dispatch). The
+   * debounce no-op is safe: over-arming the TTL costs nothing; only too-short a TTL would be risky.
+   * [Story 1.11 AC-1.11.1; architecture.md#D7.]
+   */
+  private armIdleAlarm(): void {
+    const now = Date.now();
+    if (this.#lastAlarmArmedAt !== null && now - this.#lastAlarmArmedAt <= ALARM_REARM_DEBOUNCE_MS) {
+      return; // within the debounce window — the existing alarm stands.
+    }
+    // Fire-and-forget: arming the alarm must never block the connection/message path. Stamp the debounce
+    // marker ONLY after the write succeeds — otherwise a swallowed setAlarm rejection would leave no alarm
+    // scheduled yet mark the room "armed," and the debounce would suppress the next activity's retry for a
+    // full ALARM_REARM_DEBOUNCE_MS (a window with NO GC alarm). On failure we leave #lastAlarmArmedAt
+    // unchanged so the very next activity re-attempts. (The TTL is a backstop, not a hard deadline.)
+    void this.ctx.storage
+      .setAlarm(now + IDLE_TTL_MS)
+      .then(() => {
+        this.#lastAlarmArmedAt = now;
+      })
+      .catch(() => {});
+  }
+
+  /**
+   * The idle GC alarm fired (partyserver's native alarm() calls this after #ensureInitialized()). Probe for
+   * active connections via `[...this.connections()].length` — partyserver's getConnections() filters to
+   * OPEN sockets (readyState === READY_STATE_OPEN), so a socket that is mid-CLOSE is correctly NOT counted.
+   * (Hibernation is what makes this accurate: under the standard-accept default the Story 1.1 spike found a
+   * room full of live players reading 0 — see the class-header note. We deliberately do NOT use the raw
+   * ctx.getWebSockets().length here: it returns every accepted socket regardless of readyState, so a socket
+   * in CLOSING state would be miscounted as active and a just-emptied room would survive another full TTL.)
+   * Self-delete ONLY when empty — deleteAll() clears the durable "table" key, RELEASING the Room Code for
+   * re-claim (claim-on-create finds an unclaimed DO). A room with connected players is preserved and the
+   * alarm re-armed, so the 3h idle TTL remains the backstop for sockets that never cleanly close. No central
+   * reaper — GC is solely this DO's own alarm. [Story 1.11 AC-1.11.2/.3/.4/.6; architecture.md#D7; 1-1-spike-findings AC3.]
+   */
+  override async onAlarm(): Promise<void> {
+    const activeConnections = [...this.connections()].length;
+    if (activeConnections === 0) {
+      await this.ctx.storage.deleteAll(); // self-delete — clears "table", releasing the code.
+      this.table = null; // drop the in-memory cache so a re-claim on this id starts clean.
+      this.#lastAlarmArmedAt = null;
+      return;
+    }
+    // Still active — preserve the room and re-arm the idle backstop.
+    this.#lastAlarmArmedAt = Date.now();
+    await this.ctx.storage.setAlarm(Date.now() + IDLE_TTL_MS);
   }
 }
