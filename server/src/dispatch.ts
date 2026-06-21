@@ -1,10 +1,11 @@
 // dispatch.ts — intent router + phase-legality; the single try/catch that turns an IntentError into a
 // targeted `error` event. [Source: architecture.md#Canonical-round-trip, #The-rules table — single-error-catch-site]
 //
-// SCOPE (Story 1.6 → 1.7 → 1.8): routes createRoom + joinRoom + hostSetLives. The gameplay intents
-// (deal/swap/keep/drawFromDeck/revealAll/dealAgain/newGame/hostRemovePlayer/hostReassign — Epics 2–4)
-// are routed to an explicit not-yet-implemented rejection, NEVER silently accepted. The ONE try/catch
-// lives here; handlers throw IntentError and never send.
+// SCOPE (Story 1.6 → 1.7 → 1.8 → 2.3): routes createRoom + joinRoom + hostSetLives + deal (the first
+// gameplay intent — Story 2.3). The remaining gameplay intents (swap/keep/drawFromDeck/revealAll/
+// dealAgain/newGame/hostRemovePlayer/hostReassign — Epics 2–4) are routed to an explicit
+// not-yet-implemented rejection, NEVER silently accepted. The ONE try/catch lives here; handlers throw
+// IntentError and never send.
 //
 // LOBBY VALIDATION (Decision #1, AC-1.6.3/1.7.5/1.8.3): lobby-phase intents (createRoom, joinRoom,
 // hostSetLives) are guarded by lightweight phase-checking + the Durable Object's single-threaded
@@ -21,7 +22,7 @@
 // [Source: round-trip 523.]
 import type { Intent } from "@trash/shared";
 import { IntentError } from "@trash/shared";
-import { handleCreateRoom, handleHostSetLives, handleJoinRoom, type TableHost } from "./handlers.js";
+import { handleCreateRoom, handleDeal, handleHostSetLives, handleJoinRoom, type TableHost } from "./handlers.js";
 import { fanOut, pushError, pushState } from "./push-state.js";
 
 /** The connection dispatch sends to. A partyserver Connection IS a WebSocket; we also stamp its
@@ -73,8 +74,20 @@ export async function dispatch(host: TableHost, connection: DispatchConnection, 
         fanOut(host.connections(), host.table!);
         return;
       }
-      // --- NOT in Story 1.8 — explicit rejection, never a silent accept. ---
-      // deal/swap/keep/drawFromDeck/revealAll/dealAgain/newGame/hostRemovePlayer/hostReassign → Epics 2–4.
+      case "deal": {
+        // The Host deals (Story 2.3, FR-5). The handler runs the full accepted-path chokepoint
+        // (shape → table-null → phase → host → ≥2-alive → checkPhaseToken → mutate → bump → persist),
+        // landing the table in `turns` with each Player's secret Card in the memory-only round. On a
+        // double-tap / stale token it throws `stale-phase` (or not-host/phase-illegal) BEFORE this line,
+        // so the single try/catch emits a targeted `error` with NO fan-out. On success we fan out so
+        // every device transitions to the dealt state TOGETHER (simultaneous reveal-down, AC-2.3.2),
+        // each receiving ONLY its own Card via projectStateFor (others' hands omitted — SM-6).
+        await handleDeal(host, intent, connection.state?.playerId);
+        fanOut(host.connections(), host.table!);
+        return;
+      }
+      // --- NOT yet implemented — explicit rejection, never a silent accept. ---
+      // swap/keep/drawFromDeck/revealAll/dealAgain/newGame/hostRemovePlayer/hostReassign → Epics 2–4.
       default:
         throw new IntentError("phase-illegal");
     }

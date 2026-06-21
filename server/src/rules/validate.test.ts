@@ -11,7 +11,7 @@
 import { expect, test } from "vitest";
 import { IntentError } from "@trash/shared";
 import type { Round, TableState } from "@trash/shared";
-import { bumpPhaseToken, bumpTurnToken, checkPhaseToken, checkTurnToken } from "./validate.js";
+import { assertDealable, bumpPhaseToken, bumpTurnToken, checkPhaseToken, checkTurnToken } from "./validate.js";
 
 // Minimal synthetic fixtures — the guard reads ONLY the integer token, never cards/hands (privacy by
 // construction: it cannot leak a non-owner's card because it never touches hand data).
@@ -117,4 +117,35 @@ test("AC-2.2.4 → AC-2.2.2: after a bump, the now-stale prior token is rejected
   const stalePhase = s.phaseToken;
   bumpPhaseToken(s);
   expect(reasonOf(() => checkPhaseToken(s, stalePhase))).toBe("stale-phase");
+});
+
+// ---- assertDealable (Story 2.3 — the deal-path deck-input validation 2.1 deferred, #8/#9) ----------
+// The FIRST real caller of buildDeck/shuffle is `deal`, so the deck-input guards attach here: `decks`
+// must be a finite positive INTEGER, and the deck must cover the table. [deferred-work #8/#9; AC-2.3.1.]
+
+test("assertDealable: accepts a single deck for any table size 2..20", () => {
+  for (let players = 2; players <= 20; players++) {
+    expect(() => assertDealable(players, { decks: 1 })).not.toThrow();
+  }
+});
+
+test("assertDealable: accepts two merged decks (the Epic-5 11–20 case)", () => {
+  expect(() => assertDealable(15, { decks: 2 })).not.toThrow();
+});
+
+test("assertDealable: rejects Infinity decks (the #8 hang) → phase-illegal", () => {
+  expect(reasonOf(() => assertDealable(4, { decks: Infinity }))).toBe("phase-illegal");
+});
+
+test("assertDealable: rejects 0 / negative / NaN / non-integer decks (#9) → phase-illegal", () => {
+  expect(reasonOf(() => assertDealable(4, { decks: 0 }))).toBe("phase-illegal");
+  expect(reasonOf(() => assertDealable(4, { decks: -1 }))).toBe("phase-illegal");
+  expect(reasonOf(() => assertDealable(4, { decks: NaN }))).toBe("phase-illegal");
+  expect(reasonOf(() => assertDealable(4, { decks: 1.5 }))).toBe("phase-illegal");
+});
+
+test("assertDealable: rejects a composition that cannot cover the table (deck < playerCount)", () => {
+  // 1 deck = 52 cards; 53 players would not be coverable. Proves the cover-check bites even though no
+  // in-scope table reaches it (MAX_PLAYERS is 20) — so a future change can't silently under-deal (E2).
+  expect(reasonOf(() => assertDealable(53, { decks: 1 }))).toBe("phase-illegal");
 });

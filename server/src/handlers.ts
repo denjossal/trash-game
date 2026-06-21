@@ -7,9 +7,17 @@
 // (deal/swap/reveal/the remaining host-controls, Epics 2–4) are NOT implemented here yet — dispatch.ts
 // routes them to an explicit "not in this story" rejection, never a silent accept.
 import type { Intent, Player, TableState } from "@trash/shared";
-import { DEFAULT_LIVES, IntentError, MAX_LIVES, MAX_PLAYERS, MIN_LIVES } from "@trash/shared";
+import { DEFAULT_LIVES, IntentError, MAX_LIVES, MAX_PLAYERS, MIN_LIVES, MIN_PLAYERS } from "@trash/shared";
 import { issueIdentity } from "./identity.js";
 import { loadSummary, persistSummary } from "./persistence.js";
+import { dealRound } from "./rules/engine.js";
+import { assertDealable, bumpPhaseToken, checkPhaseToken } from "./rules/validate.js";
+import { cryptoRng } from "./rng.js";
+
+/** Single-deck composition for the Epic 2 case (≤20 players all fit one 52-card deck). The
+ *  playerCount→deck-count mapping (two merged decks at 11–20) is Story 5.1 — supplied, not assumed
+ *  (Decision #8). */
+const DEAL_COMPOSITION = { decks: 1 } as const;
 
 /**
  * What a handler needs from the DO. Kept as a narrow interface so handlers.ts does not import
@@ -291,6 +299,99 @@ export async function handleHostSetLives(
   // persist, after the in-memory mutation — startingLives + players[].lives are durable (MUST persist). ---
   host.table.startingLives = next;
   for (const p of host.table.players) p.lives = next;
+  await persistSummary(host.storage, host.table);
+}
+
+/**
+ * handleDeal — the FIRST gameplay handler (Story 2.3, FR-5). The Host taps Deal in `lobby`; the server
+ * reconstitutes + reshuffles the deck, deals one secret Card to every active (isAlive) Player, sets the
+ * Starting Player (= Host on the first Round), advances `lobby → turns`, and persists the durable
+ * summary. A double-tapped/stale `deal` is rejected by the phase token before any mutation.
+ *
+ * This handler SETS THE PRECEDENT every later gameplay handler (swap/keep/draw 2.4/2.6, revealAll 3.2,
+ * host-controls 4.x) copies — the accepted-path chokepoint Story 2.2 documented. `checkPhaseToken` runs
+ * BEFORE the phase gate (not after the host check as the 2.2 sketch read) so a benign double-tap surfaces
+ * as `stale-phase`, not `phase-illegal` — see the rationale at the `checkPhaseToken` call below:
+ *   shape → table-null → not-host → checkPhaseToken → phase → ≥2-alive → assertDealable → mutate → bumpPhaseToken → persist
+ * The guard (`checkPhaseToken`) and the advance (`bumpPhaseToken`) come from the 2.2 primitive
+ * (rules/validate.ts); they are kept visibly adjacent so the pairing reads as one unit (deferred-work
+ * #117 — the bumps are bare mutators with no enforced coupling; honor the order by convention here).
+ *
+ * The `"dealing"` phase is TRANSIENT — architecture: `lobby → dealing → turns` "in the same transition"
+ * [architecture.md:577/584]. We land DIRECTLY in `"turns"`; no `"dealing"` snapshot is ever pushed.
+ *
+ * `round` is MEMORY-ONLY: `persistSummary` (toSummary) drops it (AC-2.2.5), so the durable "table" key
+ * carries only `phase:"turns"` + the bumped phaseToken — the in-flight hands/deck never touch storage.
+ * The per-device fan-out (own-card-only projection, SM-6) is dispatch's job, AFTER this handler returns.
+ *
+ * `callerPlayerId` is the connection's current stamp (dispatch reads `connection.state?.playerId`, the
+ * SAME stamp set-lives uses) — an unstamped socket → undefined → `!== hostId` → `not-host`.
+ * [Source: epics.md#Story 2.3 545–567; architecture.md D1/D4/D5; 2-2 Dev Notes accepted-path order.]
+ */
+export async function handleDeal(
+  host: TableHost,
+  // The Intent union groups deal/revealAll/dealAgain/newGame in ONE member (shared {phaseToken}
+  // payload), so Extract by a single literal would be `never`. Extract the grouped member; dispatch's
+  // `case "deal"` already guarantees this is the `deal` variant at the call site.
+  intent: Extract<Intent, { type: "deal" | "revealAll" | "dealAgain" | "newGame" }>,
+  callerPlayerId: string | undefined,
+): Promise<void> {
+  // --- SHAPE GUARD (lightweight, Decision #1 — mirrors handleHostSetLives): a missing / non-finite
+  // phaseToken would throw a raw TypeError in checkPhaseToken (NOT an IntentError → dispatch rethrows →
+  // client hangs). Reject the malformed shape cleanly as phase-illegal. ---
+  if (typeof intent.payload?.phaseToken !== "number" || !Number.isFinite(intent.payload.phaseToken)) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- table-null (defensive): an unclaimed DO has no room to deal. ---
+  if (host.table === null) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- not-host: only the Host conducts the Deal (server-authoritative, NFR-2 — same as set-lives). ---
+  if (callerPlayerId !== host.table.hostId) {
+    throw new IntentError("not-host");
+  }
+
+  // --- GUARD the phase token FIRST among the contentious checks (AC-2.3.1: "a double-tapped deal is
+  // rejected by the phase token"). The race the token exists to win: two `deal`s both carry token 0;
+  // the first is accepted (bumps to 1, moves to `turns`); the SECOND still carries 0 and mismatches the
+  // now-bumped token → `stale-phase`, BEFORE any mutation. The token check precedes the phase-legality
+  // gate so a benign double-tap surfaces as `stale-phase` (silently swallowed by the client, Story 2.2)
+  // rather than `phase-illegal`. A deal carrying the CORRECT current token but on a non-lobby phase
+  // still falls through to the phase gate below (correctly `phase-illegal`). [Story 2.2 checkPhaseToken.]
+  checkPhaseToken(host.table, intent.payload.phaseToken);
+
+  // --- phase: the FIRST deal is lobby-only (the roundResult→dealAgain re-deal is a DIFFERENT intent,
+  // Story 3.4). Reject any non-lobby phase. ---
+  if (host.table.phase !== "lobby") {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- ≥2 active Players: Deal is disabled until ≥2 (UX-DR4); the server enforces it independently of
+  // the client's disabled button. Count isAlive seats (pre-Deal every seat is alive). ---
+  const aliveCount = host.table.players.filter((p) => p.isAlive).length;
+  if (aliveCount < MIN_PLAYERS) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- deck-input field validation 2.1 deferred (assertDealable — #8/#9): the composition must be a
+  // finite positive-integer deck count that covers the table. ---
+  assertDealable(aliveCount, DEAL_COMPOSITION);
+
+  // --- MUTATE: first-Round Starting Player = Host (AC-2.3.3); build the in-flight round (deal one card
+  // per alive seat, deterministic-seeded by the crypto rng); advance straight to "turns". The cryptoRng
+  // seam lives outside rules/ (rng.ts) — the handler injects entropy into the pure dealRound. ---
+  const startingPlayerId = host.table.hostId;
+  host.table.round = dealRound(host.table.players, DEAL_COMPOSITION, cryptoRng(), startingPlayerId);
+  host.table.phase = "turns";
+
+  // --- BUMP (accepted path): advance the phase token so the next stale `deal` copy mismatches. Kept
+  // adjacent to the checkPhaseToken above so guard+advance reads as one unit. ---
+  bumpPhaseToken(host.table);
+
+  // --- PERSIST: the durable summary now carries phase:"turns" + the bumped token; `round` is dropped
+  // by toSummary (memory-only, AC-2.2.5). The fan-out (per-device projection) is dispatch's job. ---
   await persistSummary(host.storage, host.table);
 }
 

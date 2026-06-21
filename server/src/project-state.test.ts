@@ -124,3 +124,31 @@ test("SM-6: pre-reveal projection has constant shape across differing hidden val
   expect(projFirst).toEqual(projSecond);
   expect(projFirst.players.length).toBe(projSecond.players.length);
 });
+
+// ---------------------------------------------------------------------------
+// Story 2.3 — a freshly DEALT round projects ONLY the caller's own Card; the dealt state carries
+// `phase:"turns"` + currentTurnId. Complements the standing SM-6 negative assertion: it proves the
+// OWNER's card IS present after a real deal, while every non-owner's hand is omitted.
+// ---------------------------------------------------------------------------
+
+test("2.3: a dealt round projects the caller's own hand and omits every other seat's (turns phase)", () => {
+  const handA: Card = { rank: 6, suit: "♠" };
+  const handB: Card = { rank: 9, suit: "♥" };
+  const handC: Card = { rank: 12, suit: "♦" };
+  const state = tableWithHands({ A: handA, B: handB, C: handC }); // revealed:false, phase:"turns".
+
+  // Project for B — B should see its OWN card, nobody else's.
+  const projection = JSON.parse(JSON.stringify(projectStateFor(state, "B")));
+
+  expect(projection.phase).toBe("turns");
+  expect(projection.currentTurnId).toBe("A"); // fixture's startingPlayerId / currentTurnId
+  expect(projection.you.hand).toEqual(handB); // owner's own card present
+
+  const values = new Set<unknown>();
+  collectValues(projection, values);
+  // A's and C's ranks/suits appear NOWHERE in B's projection.
+  expect(values.has(handA.rank)).toBe(false);
+  expect(values.has(handC.rank)).toBe(false);
+  // No seat in players[] carries a hand while hidden (self's card lives only in you.hand).
+  for (const entry of projection.players) expect("hand" in entry).toBe(false);
+});
