@@ -64,6 +64,29 @@ describe("table-store — the read-only tableState holder + receive-loop handler
     expect(readTableState()?.code).toBe("ABCD"); // error is surfaced by the join flow, not the store
   });
 
+  // Story 2.2 AC-2.2.3: a `stale-turn` / `stale-phase` error (benign double-tap / replay / race) is
+  // discarded SILENTLY — the held snapshot is untouched and no error state is set (there is no error UI
+  // on the live surface; the accepted intent pushes a fresh tableState that arrives next).
+  it.each(["stale-turn", "stale-phase"])(
+    "silently ignores a %s error — last good tableState is preserved (no toast, no clobber)",
+    (reason) => {
+      handleSocketMessage(wire(projection({ code: "ABCD", phaseToken: 3 })));
+      const before = readTableState();
+      handleSocketMessage(wire({ reason }, "error"));
+      const after = readTableState();
+      expect(after).toBe(before); // exact same object reference — the handler did not touch the cell.
+      expect(after?.code).toBe("ABCD");
+      expect(after?.phaseToken).toBe(3);
+    },
+  );
+
+  it("after a silent stale error, the next tableState snapshot re-renders normally", () => {
+    handleSocketMessage(wire(projection({ code: "ABCD", phaseToken: 3 })));
+    handleSocketMessage(wire({ reason: "stale-turn" }, "error")); // dropped silently
+    handleSocketMessage(wire(projection({ code: "ABCD", phaseToken: 4 }))); // the winner's snapshot
+    expect(readTableState()?.phaseToken).toBe(4);
+  });
+
   it("ignores non-JSON noise without throwing or clobbering", () => {
     handleSocketMessage(wire(projection({ code: "ABCD" })));
     expect(() => handleSocketMessage("not json {{{")).not.toThrow();

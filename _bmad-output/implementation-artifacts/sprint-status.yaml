@@ -1,4 +1,8 @@
 # generated: 2026-06-19
+# last_updated: 2026-06-20 (2-2 → done code-review: all 6 ACs satisfied, 1 patch applied (requireToken param rename), 4 deferred, 5 dismissed; gates green)
+# last_updated: 2026-06-20 (2-2 → review dev-story: pure two-scope guard validate.ts + D2.1 re-persist (#61) + silent stale handling; +24 server/+3 client tests; all gates green)
+# last_updated: 2026-06-20 (2-2 → in-progress dev-story)
+# last_updated: 2026-06-20 (2-2 → ready-for-dev create-story: guard primitive validate.ts + D2.1 re-persist + silent stale handling; field-validation scoped OUT to 2.3+)
 # last_updated: 2026-06-20 (2-1 → done code-review: all 4 ACs satisfied, 0 patches, 4 input-contract gaps deferred to 2.2/5.1)
 # last_updated: 2026-06-20 (2-1 → in-progress → review dev-story: pure buildDeck+shuffle, crypto rng seam, +13 tests, narrow GATE2 test exemption)
 # last_updated: 2026-06-20 (epic-2 → in-progress; 2-1 → ready-for-dev create-story — first Epic 2 story)
@@ -87,7 +91,7 @@ development_status:
   # --- Epic 2: Play a Round ---
   epic-2: in-progress
   2-1-deck-build-and-seeded-shuffle-pure-parameterized: done
-  2-2-two-scope-monotonic-guard-built-whole: backlog
+  2-2-two-scope-monotonic-guard-built-whole: done
   2-3-deal-secret-cards-and-simultaneous-dealt-state: backlog
   2-4-take-a-turn-swap-or-keep-the-two-button-hero: backlog
   2-5-peek-your-own-card: backlog

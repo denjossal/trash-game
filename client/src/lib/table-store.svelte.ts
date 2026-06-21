@@ -52,6 +52,15 @@ export function handleSocketMessage(raw: string): void {
     tableState = event.payload as ProjectedTableState;
   }
   // `error` / unknown types: intentionally ignored — do not overwrite the last good projection.
+  //
+  // SILENT STALE HANDLING (Story 2.2, AC-2.2.3): the two-scope guard rejects a stale/double-tapped/
+  // replayed intent with `stale-turn` / `stale-phase`. The client MUST discard these SILENTLY — NO
+  // toast, NO user-facing error — and keep rendering the last good snapshot; the accepted intent that
+  // won the race pushes a fresh `tableState` that arrives here next. Because this kept-open store drops
+  // ALL `error` envelopes (the live surface has no error UI — lobby errors like bad-code/room-full are
+  // surfaced by the create/join FLOW in socket.ts, which rejects before the store adopts the socket), a
+  // benign double-tap already shows nothing. Do NOT add a toast/error surface for these two reasons in
+  // a later story. [Source: architecture.md D4 401–403; socket.ts createRoom/join error rejection.]
 }
 
 /** Take over a live, kept-open socket after a successful create/join: seed the store with the first
