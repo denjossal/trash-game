@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
-import type { Card, Player } from "@trash/shared";
-import { buildDeck, dealRound, nextAliveSeat, shuffle } from "./engine.js";
+import type { Card, Player, Round } from "@trash/shared";
+import { applyKeep, applySwap, buildDeck, dealRound, nextAliveSeat, shuffle } from "./engine.js";
 
 // A tiny deterministic PRNG (LCG) so a fixed seed yields a fixed permutation.
 // Returns a float in [0, 1) — matching shuffle's documented rng contract.
@@ -184,4 +184,114 @@ test("dealRound: is deterministic for a fixed seed (the injected-rng contract)",
   const second = dealRound(players, { decks: 1 }, seededRng(12345), "A");
   expect(first.hands).toEqual(second.hands);
   expect(first.deck).toEqual(second.deck);
+});
+
+// ---- applyKeep / applySwap (Story 2.4, AC-2.4.3, AC-2.4.4) -----------------
+// Both are PURE mutators on the passed-in round: append the caller to `acted` and advance
+// `currentTurnId` to the right-hand neighbor (nextAliveSeat). Keep leaves hands untouched; Swap
+// EXCHANGES the caller's hand with the neighbor's — UNCONDITIONALLY (no King/rank branch — FR-8).
+
+/** Build a minimal round with known hands for the turn-action tests. */
+function roundWith(currentTurnId: string, hands: Record<string, Card>): Round {
+  return {
+    startingPlayerId: currentTurnId,
+    currentTurnId,
+    turnToken: 0,
+    hands,
+    deck: [],
+    acted: [],
+    revealed: false,
+  };
+}
+
+test("applyKeep: leaves all hands untouched, records the caller in acted, advances the turn right", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  const round = roundWith("A", {
+    A: { rank: 2, suit: "♠" },
+    B: { rank: 7, suit: "♥" },
+    C: { rank: 10, suit: "♦" },
+  });
+  applyKeep(round, "A", players);
+  expect(round.hands.A).toEqual({ rank: 2, suit: "♠" }); // unchanged
+  expect(round.hands.B).toEqual({ rank: 7, suit: "♥" });
+  expect(round.acted).toEqual(["A"]);
+  expect(round.currentTurnId).toBe("B"); // turn passes right
+});
+
+test("applySwap: exchanges the caller's and right-hand neighbor's cards (each ends with the other's former card)", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  const round = roundWith("A", {
+    A: { rank: 2, suit: "♠" },
+    B: { rank: 7, suit: "♥" },
+    C: { rank: 10, suit: "♦" },
+  });
+  applySwap(round, "A", players);
+  expect(round.hands.A).toEqual({ rank: 7, suit: "♥" }); // A now holds B's former card
+  expect(round.hands.B).toEqual({ rank: 2, suit: "♠" }); // B now holds A's former card
+  expect(round.hands.C).toEqual({ rank: 10, suit: "♦" }); // untouched
+});
+
+test("applySwap: everyone still holds exactly one card after the exchange", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  const round = roundWith("A", {
+    A: { rank: 2, suit: "♠" },
+    B: { rank: 7, suit: "♥" },
+    C: { rank: 10, suit: "♦" },
+  });
+  applySwap(round, "A", players);
+  expect(Object.keys(round.hands).sort()).toEqual(["A", "B", "C"]);
+  for (const id of ["A", "B", "C"]) expect(round.hands[id]).toBeDefined();
+});
+
+test("applySwap: records the caller in acted and advances the turn to the right-hand neighbor (same seat as the swap target)", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  const round = roundWith("A", {
+    A: { rank: 2, suit: "♠" },
+    B: { rank: 7, suit: "♥" },
+    C: { rank: 10, suit: "♦" },
+  });
+  applySwap(round, "A", players);
+  expect(round.acted).toEqual(["A"]);
+  expect(round.currentTurnId).toBe("B"); // swap target == next actor (Player to the right)
+});
+
+test("applySwap: King-no-read — swap STILL happens when the neighbor holds a King (rank 13); no refusal, no King branch (FR-8/AC-2.4.6)", () => {
+  const players = [seat("A", 0), seat("B", 1)];
+  const round = roundWith("A", {
+    A: { rank: 5, suit: "♠" },
+    B: { rank: 13, suit: "♥" }, // the King — un-dumpable is a SOCIAL rule, never enforced in code
+  });
+  applySwap(round, "A", players);
+  // The exchange is unconditional: A receives the King, B receives A's 5. No value-dependent branch.
+  expect(round.hands.A).toEqual({ rank: 13, suit: "♥" });
+  expect(round.hands.B).toEqual({ rank: 5, suit: "♠" });
+});
+
+test("applySwap: outcome is value-independent — same acted/turn/exchange shape for King, Ace, or mid rank (King-no-read regression)", () => {
+  // The swap decision must not depend on the neighbor's card value (SM-6 inference channel (b)/(c)).
+  for (const neighborRank of [1, 7, 13]) {
+    const players = [seat("A", 0), seat("B", 1)];
+    const round = roundWith("A", {
+      A: { rank: 5, suit: "♠" },
+      B: { rank: neighborRank, suit: "♥" },
+    });
+    applySwap(round, "A", players);
+    expect(round.acted).toEqual(["A"]);
+    expect(round.currentTurnId).toBe("B");
+    expect(round.hands.A).toEqual({ rank: neighborRank, suit: "♥" });
+    expect(round.hands.B).toEqual({ rank: 5, suit: "♠" });
+  }
+});
+
+test("applySwap: skips an eliminated seat to find the right-hand neighbor (reuses nextAliveSeat)", () => {
+  // B is eliminated (no card); the swap target / next actor from A is C.
+  const players = [seat("A", 0), seat("B", 1, false), seat("C", 2)];
+  const round = roundWith("A", {
+    A: { rank: 2, suit: "♠" },
+    C: { rank: 10, suit: "♦" },
+  });
+  applySwap(round, "A", players);
+  expect(round.hands.A).toEqual({ rank: 10, suit: "♦" });
+  expect(round.hands.C).toEqual({ rank: 2, suit: "♠" });
+  expect(round.currentTurnId).toBe("C");
 });

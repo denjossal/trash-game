@@ -57,6 +57,10 @@ export const KEEP = "KEEP";
 /** Peek hint (Epic 2, Story 2.5) — press-and-hold to peek your own card. */
 export const PEEK_HINT = "Press and hold to peek.";
 
+/** Squirm signal (Epic 2, Story 2.4) — the value-free beat shown to a Player who just received a
+ *  swapped Card. Warm + playful, never mean; carries NO card value (the squirm is the social moment). */
+export const JUST_SWAPPED = "Someone swapped with you!";
+
 /** Showdown loser copy (Epic 3, Story 3.3) — the highest-stakes voice moment; teases, never punishes. */
 export const loser = (name: string): string => `Ooof — lowest card. That's a life, ${name}.`;
 

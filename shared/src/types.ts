@@ -71,6 +71,13 @@ export type Round = {
   deck: Card[]; // SERVER-ONLY.
   acted: string[]; // playerIds who have taken their turn this one-pass
   revealed: boolean; // true only after a valid revealAll
+  /**
+   * The playerId who JUST received a swapped Card on the most recent accepted swap (Story 2.4) —
+   * the value-free squirm transient (AR-7). MEMORY-ONLY (part of `round`, never persisted), set by
+   * applySwap and cleared on the next accepted turn action. The projector reads it to set the
+   * per-device `you.justReceivedSwap` flag, which carries NO card data (SM-6). Optional/omit-when-absent.
+   */
+  lastSwapReceiverId?: string;
 };
 
 /**

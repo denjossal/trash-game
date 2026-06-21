@@ -68,6 +68,20 @@ describe("routeFromState", () => {
     expect(routeFromState(makeState({ phase: "turns", currentTurnId: "other" }))).toBe("waiting");
   });
 
+  it("routing IGNORES justReceivedSwap — it is driven solely by currentTurnId (Story 2.4)", () => {
+    // The swap receiver lands on Your Turn because applySwap advances currentTurnId to that neighbor —
+    // NOT because of the flag. The router never reads justReceivedSwap (it is the squirm-render input on
+    // YourTurn.svelte, not a routing input). Pin BOTH halves so a future refactor can't quietly couple
+    // routing to the flag: the flag does not promote a non-current player to yourTurn...
+    expect(routeFromState(makeState({ phase: "turns", currentTurnId: "other", justReceivedSwap: true }))).toBe(
+      "waiting",
+    );
+    // ...and the current player routes to yourTurn with or without it (here: with).
+    expect(routeFromState(makeState({ phase: "turns", currentTurnId: "me", justReceivedSwap: true }))).toBe(
+      "yourTurn",
+    );
+  });
+
   it("dealing -> waiting (transient, nobody acts yet)", () => {
     expect(routeFromState(makeState({ phase: "dealing", currentTurnId: undefined }))).toBe("waiting");
   });

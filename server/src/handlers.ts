@@ -6,12 +6,12 @@
 // onClose calls) + handleHostSetLives (the Host setting starting Lives in lobby). The gameplay handlers
 // (deal/swap/reveal/the remaining host-controls, Epics 2–4) are NOT implemented here yet — dispatch.ts
 // routes them to an explicit "not in this story" rejection, never a silent accept.
-import type { Intent, Player, TableState } from "@trash/shared";
+import type { Intent, Player, Round, TableState } from "@trash/shared";
 import { DEFAULT_LIVES, IntentError, MAX_LIVES, MAX_PLAYERS, MIN_LIVES, MIN_PLAYERS } from "@trash/shared";
 import { issueIdentity } from "./identity.js";
 import { loadSummary, persistSummary } from "./persistence.js";
-import { dealRound } from "./rules/engine.js";
-import { assertDealable, bumpPhaseToken, checkPhaseToken } from "./rules/validate.js";
+import { applyKeep, applySwap, dealRound } from "./rules/engine.js";
+import { assertDealable, bumpPhaseToken, bumpTurnToken, checkPhaseToken, checkTurnToken } from "./rules/validate.js";
 import { cryptoRng } from "./rng.js";
 
 /** Single-deck composition for the Epic 2 case (≤20 players all fit one 52-card deck). The
@@ -393,6 +393,110 @@ export async function handleDeal(
   // --- PERSIST: the durable summary now carries phase:"turns" + the bumped token; `round` is dropped
   // by toSummary (memory-only, AC-2.2.5). The fan-out (per-device projection) is dispatch's job. ---
   await persistSummary(host.storage, host.table);
+}
+
+/**
+ * Shared accepted-path PRE-CHECK for the turn-scoped gameplay handlers (Story 2.4 swap/keep; reused by
+ * 2.6 drawFromDeck). Runs the EXACT order handleDeal set as the precedent, adapted to the TURN scope,
+ * and returns the validated `round` so the caller can mutate it:
+ *   shape → table-null → round-null/phase → not-your-turn → checkTurnToken
+ *
+ * ORDERING IS LOAD-BEARING (deferred-work #123): the `round !== null && phase === "turns"` gate MUST
+ * precede `checkTurnToken`, because `checkTurnToken(round, …)` reads `round.turnToken` and the D2.1
+ * reload coercion leaves `round: null` (while bumping phaseToken). A turn-scoped intent arriving after a
+ * coerced reload is rejected here as `phase-illegal` BEFORE the token deref — never a raw TypeError that
+ * would escape as a non-IntentError and hang the client. [Source: deferred-work.md #123; handleDeal order.]
+ *
+ * `not-your-turn` reads ONLY `round.currentTurnId` (a turn fact) — never a card value (SM-6 / FR-8). The
+ * caller identity is the connection's stamp (dispatch passes `connection.state?.playerId`); an unstamped
+ * or non-active socket → `not-your-turn` (server-authoritative, NFR-2 — refused even though the client
+ * only shows the buttons on the active device).
+ */
+function requireActiveTurn(
+  host: TableHost,
+  intent: Extract<Intent, { type: "swap" | "keep" | "drawFromDeck" }>,
+  callerPlayerId: string | undefined,
+): Round {
+  // --- SHAPE GUARD (lightweight, Decision #1 — mirrors handleDeal): a missing / non-finite turnToken
+  // would throw a raw TypeError in checkTurnToken (NOT an IntentError → dispatch rethrows → client
+  // hangs). Reject the malformed shape cleanly as phase-illegal. ---
+  if (typeof intent.payload?.turnToken !== "number" || !Number.isFinite(intent.payload.turnToken)) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- table-null (defensive): an unclaimed DO has no live round. ---
+  if (host.table === null) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- round-null / phase gate (deferred-work #123): a turn-scoped intent is legal ONLY mid-round
+  // (`phase === "turns"` with a live `round`). This MUST run BEFORE checkTurnToken (which derefs
+  // round.turnToken) — a post-D2.1-coercion intent (round===null) rejects here, not via a TypeError. ---
+  if (host.table.round === null || host.table.phase !== "turns") {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- not-your-turn: only the current-turn Player may act (server-authoritative, NFR-2). Reads ONLY
+  // currentTurnId — never a card value (SM-6 / FR-8). FIRST use of the frozen `not-your-turn` reason. ---
+  if (callerPlayerId !== host.table.round.currentTurnId) {
+    throw new IntentError("not-your-turn");
+  }
+
+  // --- GUARD the turn token (Story 2.2): a double-tapped/stale swap/keep throws `stale-turn` here,
+  // BEFORE any mutation. Kept adjacent to the bumpTurnToken in the caller (deferred-work #117 — honor
+  // the guard → mutate → bump order by convention). ---
+  checkTurnToken(host.table.round, intent.payload.turnToken);
+
+  return host.table.round;
+}
+
+/**
+ * handleSwap — the active Player EXCHANGES their Card with the Player to their right (Story 2.4, FR-6).
+ * The SECOND gameplay handler and the FIRST consumer of the TURN scope (handleDeal was the first PHASE
+ * consumer). Runs the shared turn-scoped pre-check (requireActiveTurn), then:
+ *   mutate (applySwap — unconditional exchange + advance turn right + set the value-free squirm
+ *   transient) → bumpTurnToken → [NO persist] → [dispatch] fanOut
+ *
+ * NO PERSIST (unlike handleDeal): a swap changes ONLY memory-only `round` fields (`hands`, `acted`,
+ * `currentTurnId`, `turnToken`, `lastSwapReceiverId`); the durable summary (code/phase/hostId/
+ * startingLives/players[]/phaseToken) is UNCHANGED (phase stays `turns`), so persisting would write an
+ * identical blob. Swap is a memory-only mutation — same no-persist precedent as markDisconnected and
+ * consistent with AC-2.2.5 (round is never persisted). [Source: architecture round-trip step 4
+ * "persistSummaryIfPhaseChanged"; persistence.ts toSummary drops round.]
+ *
+ * SM-6 / FR-8 (AC-2.4.6): applySwap does CONSTANT work regardless of the cards' ranks (a plain field
+ * exchange) — no value-dependent branch, so the response is timing-indistinguishable by card value
+ * (deferred-work #54 (b)). The handler never serializes a hand: the per-device own-card-only projection
+ * is dispatch's fanOut → pushState → projectStateFor (the SOLE chokepoint), AFTER this returns.
+ */
+export async function handleSwap(
+  host: TableHost,
+  intent: Extract<Intent, { type: "swap" | "keep" | "drawFromDeck" }>,
+  callerPlayerId: string | undefined,
+): Promise<void> {
+  const round = requireActiveTurn(host, intent, callerPlayerId);
+  // host.table is non-null here (requireActiveTurn threw otherwise); `callerPlayerId` is the verified
+  // current-turn player. applySwap exchanges the two hands, advances the turn right, and sets the
+  // value-free squirm transient (round.lastSwapReceiverId) the projector turns into justReceivedSwap.
+  applySwap(round, callerPlayerId as string, host.table!.players);
+  bumpTurnToken(round); // accepted-path advance — next stale turn-scoped copy mismatches.
+  // No persistSummary: only memory-only round fields changed (phase unchanged). See JSDoc.
+}
+
+/**
+ * handleKeep — the active Player RETAINS their Card and passes the Turn right (Story 2.4, FR-6). Same
+ * accepted-path shape as handleSwap, but applyKeep leaves `hands` untouched (and clears any prior swap
+ * squirm transient). NO PERSIST (memory-only round change; phase stays `turns`). [See handleSwap JSDoc.]
+ */
+export async function handleKeep(
+  host: TableHost,
+  intent: Extract<Intent, { type: "swap" | "keep" | "drawFromDeck" }>,
+  callerPlayerId: string | undefined,
+): Promise<void> {
+  const round = requireActiveTurn(host, intent, callerPlayerId);
+  applyKeep(round, callerPlayerId as string, host.table!.players);
+  bumpTurnToken(round);
+  // No persistSummary: only memory-only round fields changed (phase unchanged). See handleSwap JSDoc.
 }
 
 /**
