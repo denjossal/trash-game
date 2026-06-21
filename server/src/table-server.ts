@@ -29,7 +29,7 @@ import { Server } from "partyserver";
 import { ALARM_REARM_DEBOUNCE_MS, IDLE_TTL_MS, type Intent, type TableState } from "@trash/shared";
 import { dispatch } from "./dispatch.js";
 import { markDisconnected, type ConnectionState, type TableHost } from "./handlers.js";
-import { loadSummary, reconcileSummaryToState } from "./persistence.js";
+import { loadSummary, persistSummary, reconcileSummaryToState } from "./persistence.js";
 import { fanOut } from "./push-state.js";
 
 export class TableServer extends Server<Record<string, never>> implements TableHost {
@@ -54,12 +54,25 @@ export class TableServer extends Server<Record<string, never>> implements TableH
    * Hydrate the in-memory cache from the durable summary on first wake (Init AC5 — instance fields are
    * cache-only). If a summary exists, rebuild via the D2.1 reconcile (which coerces a lost live-round
    * phase to roundResult; a no-op for a lobby Table). A never-claimed DO stays `table: null` so the
-   * first createRoom can claim it. [Source: architecture.md D2/D2.1; spike AC2.]
+   * first createRoom can claim it.
+   *
+   * D2.1 RE-PERSIST (Story 2.2, AC-2.2.6 — closes deferred-work #61): when the reconcile actually
+   * COERCED a live-round phase, it bumped `phaseToken + 1` in memory; we MUST write that bumped summary
+   * back to the durable "table" key now, BEFORE the first projection, so a SECOND eviction reloads the
+   * bumped token (not the stale one) — phaseToken monotonicity survives repeated restarts. A benign
+   * lobby/between-rounds wake does NOT coerce, so we stay read-only (no write amplification on every
+   * cold wake). onStart runs inside partyserver's blockConcurrencyWhile (#ensureInitialized), so this
+   * persist completes before any onMessage/projection — the "bump before first projection" ordering
+   * holds. [Source: architecture.md D2.1; deferred-work.md #61; 1-6 onStart-before-onMessage note.]
    */
   override async onStart(): Promise<void> {
     const summary = await loadSummary(this.storage);
     if (summary !== undefined) {
-      this.table = reconcileSummaryToState(summary);
+      const { state, coerced } = reconcileSummaryToState(summary);
+      this.table = state;
+      if (coerced) {
+        await persistSummary(this.storage, state); // make the bumped phaseToken durable.
+      }
     }
   }
 

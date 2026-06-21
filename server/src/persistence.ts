@@ -63,25 +63,40 @@ export async function loadSummary(storage: DurableObjectStorage): Promise<Durabl
 const LIVE_ROUND_PHASES: ReadonlySet<Phase> = new Set<Phase>(["dealing", "turns", "allActed", "showdown"]);
 
 /**
+ * The result of a D2.1 reconcile: the rebuilt in-memory state plus whether a coercion actually fired.
+ * `coerced` is the signal `onStart` uses to RE-PERSIST exactly once — so the bumped phaseToken lands in
+ * the durable "table" key and survives a SECOND eviction (monotonicity across repeated restarts;
+ * Story 2.2 AC-2.2.6). A benign lobby/between-rounds wake reports `coerced: false` and stays read-only.
+ * [Source: deferred-work.md #61 — the re-persist gap closed in 2.2.]
+ */
+export type ReconcileResult = { state: TableState; coerced: boolean };
+
+/**
  * D2.1 reload-reconciliation (REQUIRED seam). On DO wake, rebuild the in-memory TableState from the
  * persisted summary; if the persisted phase is a live-round phase but the round is gone (always, since
  * round is never persisted), coerce phase → "roundResult" and bump phaseToken BEFORE the first
  * projection. The Host can then dealAgain. The reconstructed TableState always has `round: null`.
  *
- * NOTE (Story 1.6): this CANNOT fire at create time — a freshly created Table is in "lobby" (not a
- * live-round phase) so no coercion happens; this seam exists for the 2.2/2.3 mid-round-restart path
- * and is exercised there. It is built now because persistence.ts owns it. [Source: spike AC2/D2.1.]
+ * Returns `{ state, coerced }` so the single source of the coercion DECISION is here (the caller never
+ * re-derives "did the phase change?"): `onStart` re-persists the durable summary IFF `coerced === true`.
+ *
+ * NOTE: coercion CANNOT fire at create time — a freshly created Table is in "lobby" (not a live-round
+ * phase) so no coercion happens (`coerced: false`); this seam fires on the 2.2/2.3 mid-round-restart
+ * path and is exercised there. [Source: spike AC2/D2.1; architecture.md D2.1 359–363.]
  */
-export function reconcileSummaryToState(summary: DurableSummary): TableState {
-  const needsCoercion = LIVE_ROUND_PHASES.has(summary.phase);
+export function reconcileSummaryToState(summary: DurableSummary): ReconcileResult {
+  const coerced = LIVE_ROUND_PHASES.has(summary.phase);
   const players: Player[] = summary.players.map((p) => ({ ...p, isConnected: false }));
   return {
-    code: summary.code,
-    phase: needsCoercion ? "roundResult" : summary.phase,
-    hostId: summary.hostId,
-    startingLives: summary.startingLives,
-    players,
-    round: null, // round is memory-only — never restored from the summary.
-    phaseToken: needsCoercion ? summary.phaseToken + 1 : summary.phaseToken,
+    coerced,
+    state: {
+      code: summary.code,
+      phase: coerced ? "roundResult" : summary.phase,
+      hostId: summary.hostId,
+      startingLives: summary.startingLives,
+      players,
+      round: null, // round is memory-only — never restored from the summary.
+      phaseToken: coerced ? summary.phaseToken + 1 : summary.phaseToken,
+    },
   };
 }
