@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
-import type { Card } from "@trash/shared";
-import { buildDeck, shuffle } from "./engine.js";
+import type { Card, Player } from "@trash/shared";
+import { buildDeck, dealRound, nextAliveSeat, shuffle } from "./engine.js";
 
 // A tiny deterministic PRNG (LCG) so a fixed seed yields a fixed permutation.
 // Returns a float in [0, 1) — matching shuffle's documented rng contract.
@@ -99,4 +99,89 @@ test("shuffle: exact expected order for a known small deck + fixed seed (locks F
   const out = shuffle(small, seededRng(12345)).map((c) => c.rank);
   // Snapshot of the deterministic result (computed from the LCG + standard Fisher–Yates).
   expect(out).toEqual([5, 1, 3, 2, 4]);
+});
+
+// ---- nextAliveSeat (Story 2.3, AC-2.3.3) ----------------------------------
+// The single rotation primitive: walk RIGHT (increasing seatIndex, wrapping), skipping non-alive
+// seats. Reused by turn order (2.4), "Player to your right" (2.4 swap), and the D6 tiebreak (3.1).
+
+function seat(id: string, seatIndex: number, isAlive = true): Player {
+  return { id, name: `name-${id}`, lives: isAlive ? 3 : 0, isAlive, isConnected: true, seatIndex };
+}
+
+test("nextAliveSeat: returns the next seat to the right (increasing seatIndex)", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  expect(nextAliveSeat(players, 0)).toBe("B");
+  expect(nextAliveSeat(players, 1)).toBe("C");
+});
+
+test("nextAliveSeat: wraps from the last seat back to the first", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  expect(nextAliveSeat(players, 2)).toBe("A");
+});
+
+test("nextAliveSeat: skips non-alive seats (eliminated players are not in turn order)", () => {
+  // B is eliminated — from A, the next alive seat to the right is C (skip B).
+  const players = [seat("A", 0), seat("B", 1, false), seat("C", 2)];
+  expect(nextAliveSeat(players, 0)).toBe("C");
+  // From C, wrap past A? A is alive — so C → A.
+  expect(nextAliveSeat(players, 2)).toBe("A");
+});
+
+test("nextAliveSeat: a single alive seat returns itself (wraps all the way around)", () => {
+  const players = [seat("A", 0), seat("B", 1, false), seat("C", 2, false)];
+  expect(nextAliveSeat(players, 0)).toBe("A");
+});
+
+test("nextAliveSeat: respects seatIndex order, not array order", () => {
+  // Array is out of seat order; the walk follows seatIndex, not the array position.
+  const players = [seat("C", 2), seat("A", 0), seat("B", 1)];
+  expect(nextAliveSeat(players, 0)).toBe("B"); // seat 0 → seat 1 (B)
+  expect(nextAliveSeat(players, 2)).toBe("A"); // seat 2 → wrap → seat 0 (A)
+});
+
+// ---- dealRound (Story 2.3, AC-2.3.1, AC-2.3.3) ----------------------------
+
+test("dealRound: deals exactly one card per alive player, leaves the rest in the deck", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  const round = dealRound(players, { decks: 1 }, seededRng(42), "A");
+  expect(Object.keys(round.hands).sort()).toEqual(["A", "B", "C"]);
+  // 3 cards dealt out of 52 → 49 remain in the deck; no card lost or duplicated.
+  expect(round.deck.length).toBe(52 - 3);
+});
+
+test("dealRound: sets the fresh-round invariants (acted empty, not revealed, turnToken 0, currentTurn = starting)", () => {
+  const players = [seat("A", 0), seat("B", 1)];
+  const round = dealRound(players, { decks: 1 }, seededRng(7), "A");
+  expect(round.acted).toEqual([]);
+  expect(round.revealed).toBe(false);
+  expect(round.turnToken).toBe(0);
+  expect(round.startingPlayerId).toBe("A");
+  expect(round.currentTurnId).toBe("A");
+});
+
+test("dealRound: deals ONLY to alive players (eliminated seats get no card)", () => {
+  const players = [seat("A", 0), seat("B", 1, false), seat("C", 2)];
+  const round = dealRound(players, { decks: 1 }, seededRng(7), "A");
+  expect(Object.keys(round.hands).sort()).toEqual(["A", "C"]);
+  expect(round.hands.B).toBeUndefined();
+  // 2 alive dealt → 50 remain.
+  expect(round.deck.length).toBe(50);
+});
+
+test("dealRound: every dealt card is a valid card, and dealt + deck = the full shuffled deck (no loss/dupe)", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  const round = dealRound(players, { decks: 1 }, seededRng(99), "A");
+  const all = [...Object.values(round.hands), ...round.deck];
+  expect(all.length).toBe(52);
+  const norm = (d: Card[]) => d.map((c) => `${c.rank}${c.suit}`).sort();
+  expect(norm(all)).toEqual(norm(buildDeck({ decks: 1 })));
+});
+
+test("dealRound: is deterministic for a fixed seed (the injected-rng contract)", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  const first = dealRound(players, { decks: 1 }, seededRng(12345), "A");
+  const second = dealRound(players, { decks: 1 }, seededRng(12345), "A");
+  expect(first.hands).toEqual(second.hands);
+  expect(first.deck).toEqual(second.deck);
 });
