@@ -27,11 +27,20 @@ export type DurableSummary = {
   startingLives: number;
   players: DurablePlayer[];
   phaseToken: number;
+  // BETWEEN-ROUND RESULT (Story 3.4) — durable so a DO reload at roundResult/gameOver still shows the
+  // loser/winner + the post-deduction pips AND can still re-deal the correct Loser. Omit-when-absent (only
+  // set while resolved). `nextStartingPlayerId` MUST be persisted too: a roundResult wake (or a coerced
+  // live-round wake) loses the in-memory carrier otherwise, and the next dealAgain would seat the wrong
+  // starter (FR-12 violation) or fall back to a possibly-eliminated hostId (dealRound asserts → plain
+  // Error → unhandled). Persisting it keeps the durable summary self-sufficient for the re-deal.
+  loserIds?: string[];
+  winnerIds?: string[];
+  nextStartingPlayerId?: string;
 };
 
 /** Project a TableState down to its durable summary (drops `round` and `isConnected`). */
 export function toSummary(state: TableState): DurableSummary {
-  return {
+  const summary: DurableSummary = {
     code: state.code,
     phase: state.phase,
     hostId: state.hostId,
@@ -45,6 +54,13 @@ export function toSummary(state: TableState): DurableSummary {
     })),
     phaseToken: state.phaseToken,
   };
+  // The between-round result (Story 3.4) — carried durably ONLY when set (omit-when-absent, mirroring
+  // the projection). nextStartingPlayerId is persisted alongside so a roundResult wake can still re-deal
+  // the correct Loser (it is value-free seating data, never a card).
+  if (state.loserIds) summary.loserIds = state.loserIds;
+  if (state.winnerIds) summary.winnerIds = state.winnerIds;
+  if (state.nextStartingPlayerId) summary.nextStartingPlayerId = state.nextStartingPlayerId;
+  return summary;
 }
 
 /** Write the durable summary to the single "table" key. Called after a state transition. */
@@ -87,16 +103,21 @@ export type ReconcileResult = { state: TableState; coerced: boolean };
 export function reconcileSummaryToState(summary: DurableSummary): ReconcileResult {
   const coerced = LIVE_ROUND_PHASES.has(summary.phase);
   const players: Player[] = summary.players.map((p) => ({ ...p, isConnected: false }));
-  return {
-    coerced,
-    state: {
-      code: summary.code,
-      phase: coerced ? "roundResult" : summary.phase,
-      hostId: summary.hostId,
-      startingLives: summary.startingLives,
-      players,
-      round: null, // round is memory-only — never restored from the summary.
-      phaseToken: coerced ? summary.phaseToken + 1 : summary.phaseToken,
-    },
+  const state: TableState = {
+    code: summary.code,
+    phase: coerced ? "roundResult" : summary.phase,
+    hostId: summary.hostId,
+    startingLives: summary.startingLives,
+    players,
+    round: null, // round is memory-only — never restored from the summary.
+    phaseToken: coerced ? summary.phaseToken + 1 : summary.phaseToken,
   };
+  // Restore the between-round result (Story 3.4) when it was persisted (a roundResult/gameOver wake) so
+  // the surface still shows the pips + loser/winner AND the Host can still re-deal the correct Loser after
+  // a reload. nextStartingPlayerId is restored alongside so handleDealAgain seats the resolved Loser
+  // (FR-12) on the recovery path rather than falling back to hostId.
+  if (summary.loserIds) state.loserIds = summary.loserIds;
+  if (summary.winnerIds) state.winnerIds = summary.winnerIds;
+  if (summary.nextStartingPlayerId) state.nextStartingPlayerId = summary.nextStartingPlayerId;
+  return { coerced, state };
 }

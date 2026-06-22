@@ -58,7 +58,14 @@ export function projectStateFor(state: TableState, playerId: string): ProjectedT
       isConnected: p.isConnected,
       seatIndex: p.seatIndex,
     };
-    if (revealed && round) entry.hand = round.hands[p.id];
+    // OMIT the key for a hand-less seat (AC-3.4.8): after the Story-3.4 resolution an eliminated seat
+    // stays in players[] while revealed===true, but dealRound never dealt it a card — so round.hands has
+    // no entry. Assigning `round.hands[p.id]` directly would set `hand = undefined` (a constant-shape
+    // breach pre-serialization). Read-then-guard so the key is genuinely absent for such a seat.
+    if (revealed && round) {
+      const h = round.hands[p.id];
+      if (h) entry.hand = h;
+    }
     return entry;
   });
 
@@ -73,10 +80,16 @@ export function projectStateFor(state: TableState, playerId: string): ProjectedT
     // `revealed` is a meaningful boolean — ALWAYS present, never omitted. [Source: types.ts.]
     revealed,
   };
+  // loserIds/winnerIds — the between-round result (Story 3.4), set on TableState by the resolution
+  // inside handleReveal and live at roundResult/gameOver. Value-free (server-computed eliminations /
+  // win-check), so projecting them does not breach SM-6. Omit-when-absent: emit the key ONLY when the
+  // producer set it (a pre-reveal / bare-showdown / fresh state has neither). [Source: types.ts; AC-3.4.2.]
+  if (state.loserIds) projection.loserIds = state.loserIds;
+  if (state.winnerIds) projection.winnerIds = state.winnerIds;
+
   // currentTurnId/turnToken exist only while a round does — omit (optional) otherwise. Their
   // presence depends on round existence (a PHASE fact), never on a hidden card value, so this does
-  // not breach the constant-shape invariant. loserIds/winnerIds are Epic 3 beats — no code sets them
-  // yet, so they are omitted entirely this story.
+  // not breach the constant-shape invariant.
   if (round) {
     projection.currentTurnId = round.currentTurnId;
     projection.turnToken = round.turnToken;
@@ -93,18 +106,10 @@ export function projectStateFor(state: TableState, playerId: string): ProjectedT
   return projection;
 }
 
-// Server half of the single-source-of-truth guarantee (Story 1.3 AC4), preserved for the contract
-// fields the real body above does NOT yet construct. The body now structurally consumes most of
-// ProjectedTableState/Player/Round/Card — including `justReceivedSwap` (Story 2.4, set above from
-// round.lastSwapReceiverId), so that field is no longer scaffolded here. `loserIds`/`winnerIds` remain
-// Epic 3 beats this story leaves unset, so without this binding a rename of either would NOT break the
-// server typecheck. This `satisfies` literal exercises exactly those two. Type-only — never executed,
-// never serialized. Remove once a real producer (Epic 3 handlers) structurally sets these two fields.
-const _beats = {
-  loserIds: [""],
-  winnerIds: [""],
-} satisfies Pick<ProjectedTableState, "loserIds" | "winnerIds">;
-void _beats;
+// Story 3.4 removed the `loserIds`/`winnerIds` SSoT scaffold: the body now STRUCTURALLY sets both
+// (projection.loserIds = state.loserIds / projection.winnerIds = state.winnerIds above), so a rename of
+// either ProjectedTableState field breaks the server typecheck directly — the real producer replaced
+// the type-only binding.
 
 // SSoT for the `Round` fields the body does NOT read. The projection now consumes `round.revealed`,
 // `round.hands`, `round.currentTurnId`, `round.turnToken` AND `round.startingPlayerId` structurally

@@ -329,3 +329,56 @@ test("3.2: the revealed projection is constant-shape across differing hand value
   expect(projFirst).toEqual(projSecond);
   expect(projFirst.players.length).toBe(projSecond.players.length);
 });
+
+// ---------------------------------------------------------------------------
+// Story 3.4 — the resolution producer. projectStateFor now EMITS state.loserIds/winnerIds
+// (omit-when-absent), and GUARDS the reveal-branch hand assignment so an eliminated/hand-less seat
+// (left in players[] while revealed===true after resolution) OMITS the `hand` key rather than
+// assigning undefined (AC-3.4.8 — the project-state.ts:61 constant-shape breach deferred from 3.2).
+// ---------------------------------------------------------------------------
+
+test("3.4: loserIds/winnerIds are projected when set on TableState (omit-when-absent producer)", () => {
+  const state = revealedTableWithHands({
+    A: { rank: 6, suit: "♠" },
+    B: { rank: 9, suit: "♥" },
+    C: { rank: 12, suit: "♦" },
+  });
+  // The resolution stashed the result on TableState (Story 3.4 producer).
+  state.loserIds = ["A"];
+  state.winnerIds = ["B", "C"];
+
+  const projection = JSON.parse(JSON.stringify(projectStateFor(state, "A")));
+  expect(projection.loserIds).toEqual(["A"]);
+  expect(projection.winnerIds).toEqual(["B", "C"]);
+});
+
+test("3.4: loserIds/winnerIds are OMITTED entirely when unset on TableState", () => {
+  const state = revealedTableWithHands({
+    A: { rank: 6, suit: "♠" },
+    B: { rank: 9, suit: "♥" },
+  });
+  // No resolution fields set (a pre-reveal / bare-showdown / between-rounds-without-result state).
+  const projection = JSON.parse(JSON.stringify(projectStateFor(state, "A")));
+  expect("loserIds" in projection).toBe(false);
+  expect("winnerIds" in projection).toBe(false);
+});
+
+test("3.4: a revealed projection OMITS the hand key for a hand-less (eliminated) seat (AC-3.4.8)", () => {
+  // After resolution an eliminated seat stays in players[] while revealed===true, but dealRound never
+  // dealt it a card → round.hands has no entry. The reveal branch MUST omit the key, not assign undefined.
+  const handA: Card = { rank: 6, suit: "♠" };
+  const handB: Card = { rank: 9, suit: "♥" };
+  // C is eliminated this round — present in players[] but absent from hands.
+  const state = revealedTableWithHands({ A: handA, B: handB });
+  const cSeat = state.players.find((p) => p.id === "C")!;
+  cSeat.isAlive = false; // eliminated
+
+  const projection = JSON.parse(JSON.stringify(projectStateFor(state, "A")));
+  const byId: Record<string, (typeof projection.players)[number]> = {};
+  for (const entry of projection.players) byId[entry.id] = entry;
+
+  // A and B carry their hands; C (hand-less) carries NO `hand` key at all (omitted, not undefined).
+  expect(byId.A.hand).toEqual(handA);
+  expect(byId.B.hand).toEqual(handB);
+  expect("hand" in byId.C).toBe(false);
+});

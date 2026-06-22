@@ -108,3 +108,64 @@ test("reconcile: hydrated durable fields survive (code/hostId/startingLives/play
   expect(state.players).toHaveLength(1);
   expect(state.players[0].id).toBe("p1");
 });
+
+// ---- Story 3.4: loserIds/winnerIds carried durably in the summary ----------
+
+test("3.4 toSummary: carries loserIds/winnerIds when set (between-round result fields)", () => {
+  const state = liveState();
+  state.phase = "roundResult";
+  state.loserIds = ["p1"];
+  state.winnerIds = ["p2"];
+  const blob = toSummary(state);
+  expect(blob.loserIds).toEqual(["p1"]);
+  expect(blob.winnerIds).toEqual(["p2"]);
+});
+
+test("3.4 toSummary: OMITS loserIds/winnerIds when unset (omit-when-absent)", () => {
+  const blob = toSummary(liveState()) as Record<string, unknown>;
+  expect("loserIds" in blob).toBe(false);
+  expect("winnerIds" in blob).toBe(false);
+});
+
+test("3.4 reconcile: persisted loserIds/winnerIds at roundResult/gameOver survive the wake", () => {
+  // A roundResult wake (safe phase — no coercion) keeps the persisted result fields so the surface
+  // still shows the pips/loser after a DO reload.
+  const { state, coerced } = reconcileSummaryToState(
+    summary({ phase: "roundResult", loserIds: ["p1"], winnerIds: ["p2"] }),
+  );
+  expect(coerced).toBe(false);
+  expect(state.loserIds).toEqual(["p1"]);
+  expect(state.winnerIds).toEqual(["p2"]);
+});
+
+test("3.4 reconcile: a wake with no persisted result fields leaves them unset", () => {
+  const { state } = reconcileSummaryToState(summary({ phase: "roundResult" }));
+  expect(state.loserIds).toBeUndefined();
+  expect(state.winnerIds).toBeUndefined();
+});
+
+// ---- Story 3.4 (review fix): nextStartingPlayerId carried durably so a roundResult reload re-deals
+// the correct Loser instead of soft-locking / falling back to hostId. ----
+
+test("3.4 toSummary: carries nextStartingPlayerId when set (the re-deal starter)", () => {
+  const state = liveState();
+  state.phase = "roundResult";
+  state.loserIds = ["p1"];
+  state.nextStartingPlayerId = "p1";
+  const blob = toSummary(state);
+  expect(blob.nextStartingPlayerId).toBe("p1");
+});
+
+test("3.4 toSummary: OMITS nextStartingPlayerId when unset (omit-when-absent)", () => {
+  const blob = toSummary(liveState()) as Record<string, unknown>;
+  expect("nextStartingPlayerId" in blob).toBe(false);
+});
+
+test("3.4 reconcile: persisted nextStartingPlayerId survives the wake (re-deal seats the Loser)", () => {
+  // A roundResult reload restores the resolved Loser so handleDealAgain seats it (FR-12) rather than
+  // soft-locking or falling back to hostId.
+  const { state } = reconcileSummaryToState(
+    summary({ phase: "roundResult", loserIds: ["p1"], nextStartingPlayerId: "p1" }),
+  );
+  expect(state.nextStartingPlayerId).toBe("p1");
+});

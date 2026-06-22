@@ -10,7 +10,15 @@ import type { Intent, Player, Round, TableState } from "@trash/shared";
 import { DEFAULT_LIVES, IntentError, MAX_LIVES, MAX_PLAYERS, MIN_LIVES, MIN_PLAYERS } from "@trash/shared";
 import { issueIdentity } from "./identity.js";
 import { loadSummary, persistSummary } from "./persistence.js";
-import { allAlivePlayersActed, applyDraw, applyKeep, applySwap, dealRound, isLastPlayer } from "./rules/engine.js";
+import {
+  allAlivePlayersActed,
+  applyDraw,
+  applyKeep,
+  applySwap,
+  dealRound,
+  isLastPlayer,
+  resolveShowdown,
+} from "./rules/engine.js";
 import { assertDealable, bumpPhaseToken, bumpTurnToken, checkPhaseToken, checkTurnToken } from "./rules/validate.js";
 import { cryptoRng } from "./rng.js";
 
@@ -308,11 +316,11 @@ export async function handleHostSetLives(
  * Starting Player (= Host on the first Round), advances `lobby → turns`, and persists the durable
  * summary. A double-tapped/stale `deal` is rejected by the phase token before any mutation.
  *
- * This handler SETS THE PRECEDENT every later gameplay handler (swap/keep/draw 2.4/2.6, revealAll 3.2,
- * host-controls 4.x) copies — the accepted-path chokepoint Story 2.2 documented. `checkPhaseToken` runs
- * BEFORE the phase gate (not after the host check as the 2.2 sketch read) so a benign double-tap surfaces
- * as `stale-phase`, not `phase-illegal` — see the rationale at the `checkPhaseToken` call below:
- *   shape → table-null → not-host → checkPhaseToken → phase → ≥2-alive → assertDealable → mutate → bumpPhaseToken → persist
+ * This handler SET THE PRECEDENT every later phase-scoped handler (revealAll 3.2, dealAgain 3.4,
+ * host-controls 4.x) copies — the accepted-path chokepoint Story 2.2 documented. The shared
+ * `requirePhaseConductor` helper now OWNS that order so the three callers cannot drift; `checkPhaseToken`
+ * runs BEFORE the phase gate (so a benign double-tap surfaces as `stale-phase`, not `phase-illegal`):
+ *   shape → table-null → not-host → checkPhaseToken → phase → [≥2-alive → assertDealable] → mutate → bumpPhaseToken → persist
  * The guard (`checkPhaseToken`) and the advance (`bumpPhaseToken`) come from the 2.2 primitive
  * (rules/validate.ts); they are kept visibly adjacent so the pairing reads as one unit (deferred-work
  * #117 — the bumps are bare mutators with no enforced coupling; honor the order by convention here).
@@ -336,41 +344,17 @@ export async function handleDeal(
   intent: Extract<Intent, { type: "deal" | "revealAll" | "dealAgain" | "newGame" }>,
   callerPlayerId: string | undefined,
 ): Promise<void> {
-  // --- SHAPE GUARD (lightweight, Decision #1 — mirrors handleHostSetLives): a missing / non-finite
-  // phaseToken would throw a raw TypeError in checkPhaseToken (NOT an IntentError → dispatch rethrows →
-  // client hangs). Reject the malformed shape cleanly as phase-illegal. ---
-  if (typeof intent.payload?.phaseToken !== "number" || !Number.isFinite(intent.payload.phaseToken)) {
-    throw new IntentError("phase-illegal");
-  }
-
-  // --- table-null (defensive): an unclaimed DO has no room to deal. ---
-  if (host.table === null) {
-    throw new IntentError("phase-illegal");
-  }
-
-  // --- not-host: only the Host conducts the Deal (server-authoritative, NFR-2 — same as set-lives). ---
-  if (callerPlayerId !== host.table.hostId) {
-    throw new IntentError("not-host");
-  }
-
-  // --- GUARD the phase token FIRST among the contentious checks (AC-2.3.1: "a double-tapped deal is
-  // rejected by the phase token"). The race the token exists to win: two `deal`s both carry token 0;
-  // the first is accepted (bumps to 1, moves to `turns`); the SECOND still carries 0 and mismatches the
-  // now-bumped token → `stale-phase`, BEFORE any mutation. The token check precedes the phase-legality
-  // gate so a benign double-tap surfaces as `stale-phase` (silently swallowed by the client, Story 2.2)
-  // rather than `phase-illegal`. A deal carrying the CORRECT current token but on a non-lobby phase
-  // still falls through to the phase gate below (correctly `phase-illegal`). [Story 2.2 checkPhaseToken.]
-  checkPhaseToken(host.table, intent.payload.phaseToken);
-
-  // --- phase: the FIRST deal is lobby-only (the roundResult→dealAgain re-deal is a DIFFERENT intent,
-  // Story 3.4). Reject any non-lobby phase. ---
-  if (host.table.phase !== "lobby") {
-    throw new IntentError("phase-illegal");
-  }
+  // --- ACCEPTED-PATH PRE-CHECK (AC-2.3.1): shape → table-null → not-host → checkPhaseToken → phase
+  // (=== "lobby"). The double-tap ordering (token before phase gate) lives in the shared helper: two
+  // `deal`s both carry token 0; the first is accepted (bumps to 1, moves to `turns`); the SECOND still
+  // carries 0 and mismatches → `stale-phase`, BEFORE any mutation. The FIRST deal is lobby-only (the
+  // roundResult→dealAgain re-deal is a DIFFERENT intent, Story 3.4). ---
+  requirePhaseConductor(host, intent, callerPlayerId, "lobby");
+  const table = host.table!; // requirePhaseConductor proved it non-null.
 
   // --- ≥2 active Players: Deal is disabled until ≥2 (UX-DR4); the server enforces it independently of
   // the client's disabled button. Count isAlive seats (pre-Deal every seat is alive). ---
-  const aliveCount = host.table.players.filter((p) => p.isAlive).length;
+  const aliveCount = table.players.filter((p) => p.isAlive).length;
   if (aliveCount < MIN_PLAYERS) {
     throw new IntentError("phase-illegal");
   }
@@ -382,17 +366,17 @@ export async function handleDeal(
   // --- MUTATE: first-Round Starting Player = Host (AC-2.3.3); build the in-flight round (deal one card
   // per alive seat, deterministic-seeded by the crypto rng); advance straight to "turns". The cryptoRng
   // seam lives outside rules/ (rng.ts) — the handler injects entropy into the pure dealRound. ---
-  const startingPlayerId = host.table.hostId;
-  host.table.round = dealRound(host.table.players, DEAL_COMPOSITION, cryptoRng(), startingPlayerId);
-  host.table.phase = "turns";
+  const startingPlayerId = table.hostId;
+  table.round = dealRound(table.players, DEAL_COMPOSITION, cryptoRng(), startingPlayerId);
+  table.phase = "turns";
 
   // --- BUMP (accepted path): advance the phase token so the next stale `deal` copy mismatches. Kept
   // adjacent to the checkPhaseToken above so guard+advance reads as one unit. ---
-  bumpPhaseToken(host.table);
+  bumpPhaseToken(table);
 
   // --- PERSIST: the durable summary now carries phase:"turns" + the bumped token; `round` is dropped
   // by toSummary (memory-only, AC-2.2.5). The fan-out (per-device projection) is dispatch's job. ---
-  await persistSummary(host.storage, host.table);
+  await persistSummary(host.storage, table);
 }
 
 /**
@@ -410,10 +394,16 @@ export async function handleDeal(
  * sees only final cards. A `revealAll` in any other phase → `phase-illegal`; a double-tapped/stale one →
  * `stale-phase` (the token bumped on the accepted reveal). Both are rejected BEFORE the mutation.
  *
- * SCOPE (AC-3.2.6): this handler ONLY flips `revealed` and lands in `showdown`. It does NOT call
- * `resolveShowdown`, deduct Lives, mark eliminations, or set loserIds/winnerIds, and it does NOT
- * transition past `showdown` — the Showdown RESOLUTION (`showdown → roundResult | gameOver` via Story
- * 3.1's pure `resolveShowdown`) is Story 3.4. Once `revealed` is true, `projectStateFor`'s existing
+ * RESOLVE-AT-REVEAL (Story 3.4 — resolution wired in): after flipping `revealed = true`, this handler
+ * now ALSO runs the pure `resolveShowdown` (Story 3.1) synchronously in the SAME transition and applies
+ * its result: each Loser's Life deducted, `isAlive=false` for any at 0, `loserIds` (always) and — on the
+ * terminal outcome — `winnerIds` stashed on TableState, and the phase advanced to `roundResult` (≥2 alive)
+ * or `gameOver` (≤1 alive). The `round` is KEPT (not nulled) so `revealed` stays true and every hand + the
+ * loser highlight render on the beat. CONSEQUENCE: the wire never RESTS at the `showdown` phase literal —
+ * it is now a transient internal value (set then immediately overwritten by the resolution in this same
+ * handler); the flip beat is shown on a `roundResult`/`gameOver` projection that still carries `revealed`.
+ * On `continue` the resolved `nextStartingPlayerId` (the Loser of this round) is stashed so `dealAgain`
+ * (Story 3.4) can seat the next Round's Starting Player. Once `revealed` is true, `projectStateFor`'s
  * `revealed` branch (project-state.ts) includes every seat's hand in each per-device payload — the first
  * moment a non-owner receives another Player's Card value (SM-6 EXTENDED, not weakened — Decision #3).
  *
@@ -429,50 +419,129 @@ export async function handleReveal(
   intent: Extract<Intent, { type: "deal" | "revealAll" | "dealAgain" | "newGame" }>,
   callerPlayerId: string | undefined,
 ): Promise<void> {
-  // --- SHAPE GUARD (lightweight, Decision #1 — mirrors handleDeal): a missing / non-finite phaseToken
-  // would throw a raw TypeError in checkPhaseToken (NOT an IntentError → dispatch rethrows → client
-  // hangs). Reject the malformed shape cleanly as phase-illegal. ---
-  if (typeof intent.payload?.phaseToken !== "number" || !Number.isFinite(intent.payload.phaseToken)) {
+  // --- ACCEPTED-PATH PRE-CHECK (AC-3.2.1/.2/.3): shape → table-null → not-host → checkPhaseToken → phase
+  // (=== "allActed"). revealAll is accepted ONLY at `allActed` — the one phase where every Card is final
+  // but still hidden (reveal-finality NFR-5). The double-tap ordering (token before phase gate) lives in
+  // the shared helper. ---
+  requirePhaseConductor(host, intent, callerPlayerId, "allActed");
+  const table = host.table!; // requirePhaseConductor proved it non-null.
+
+  // --- round-null (defensive): at `allActed` a live round always exists (the pass just completed; a
+  // D2.1-coerced wake lands in roundResult, never allActed). Guard before deref so an impossible
+  // null round rejects as phase-illegal rather than throwing a raw TypeError below. ---
+  if (table.round === null) {
     throw new IntentError("phase-illegal");
   }
 
-  // --- table-null (defensive): an unclaimed DO has no round to reveal. ---
-  if (host.table === null) {
-    throw new IntentError("phase-illegal");
+  // --- MUTATE (flip): reveal the hands. `showdown` is set transiently then immediately resolved through
+  // below (the wire never rests here). Once `revealed` is true, projectStateFor exposes every hand
+  // (Decision #3 — SM-6 extended). ---
+  table.round.revealed = true;
+  table.phase = "showdown";
+
+  // --- RESOLVE-AT-REVEAL (Story 3.4): run the PURE resolveShowdown on the now-revealed hands and apply
+  // its result. The previous Starting Player (the scan origin for the step-6 tiebreak) is THIS round's
+  // startingPlayerId. resolveShowdown returns a NEW players array (lives deducted, eliminations marked) +
+  // the loser set + a discriminated win-check outcome; it never mutates its inputs and self-asserts its
+  // preconditions (3.1 Action-4 hardening). The handler owns applying the result, persisting, projecting. ---
+  const result = resolveShowdown(table.players, table.round.hands, table.round.startingPlayerId);
+  table.players = result.players; // the NEW array (lives deducted + isAlive marked).
+  table.loserIds = result.loserIds; // always set at resolution.
+  if (result.outcome.kind === "winner") {
+    // ≤1 alive after the deduction → terminal. Land gameOver, name the winner(s). No next starter (the
+    // tiebreak never runs on a terminal game — AC-3.1.2). Winner surface is Story 3.6; this only sets it.
+    table.phase = "gameOver";
+    table.winnerIds = result.outcome.winnerIds;
+    table.nextStartingPlayerId = undefined; // no re-deal from a terminal game.
+  } else {
+    // ≥2 alive → continue. Land roundResult and stash the resolved Loser as the next Round's Starting
+    // Player so dealAgain (Story 3.4) seats it (persisted, so a reload re-deals it). winnerIds stays unset.
+    table.phase = "roundResult";
+    table.winnerIds = undefined;
+    table.nextStartingPlayerId = result.outcome.nextStartingPlayerId;
   }
-
-  // --- not-host (AC-3.2.3): only the Host conducts the reveal (server-authoritative, NFR-2 — same as
-  // handleDeal/handleHostSetLives). A crafted revealAll from a guest is refused even at allActed. ---
-  if (callerPlayerId !== host.table.hostId) {
-    throw new IntentError("not-host");
-  }
-
-  // --- GUARD the phase token FIRST among the contentious checks (AC-3.2.2 double-tap): a second
-  // revealAll carries the same now-stale token → `stale-phase`, BEFORE any mutation. The token check
-  // precedes the phase gate so a benign double-tap surfaces as `stale-phase` (silently swallowed by the
-  // client, Story 2.2) rather than `phase-illegal` — the SAME ordering rationale as handleDeal. ---
-  checkPhaseToken(host.table, intent.payload.phaseToken);
-
-  // --- phase (AC-3.2.1/.2): revealAll is accepted ONLY at `allActed` — the one phase where every Card is
-  // final but still hidden. Any other phase → `phase-illegal` (reveal-finality NFR-5). At `allActed` a
-  // live round always exists (the pass just completed; a D2.1-coerced wake lands in roundResult, never
-  // allActed), so `round` is non-null past this gate. ---
-  if (host.table.phase !== "allActed" || host.table.round === null) {
-    throw new IntentError("phase-illegal");
-  }
-
-  // --- MUTATE: flip the reveal and advance to `showdown` (the resolution showdown→roundResult|gameOver is
-  // Story 3.4). Once `revealed` is true, projectStateFor exposes every hand (Decision #3 — SM-6 extended). ---
-  host.table.round.revealed = true;
-  host.table.phase = "showdown";
+  // KEEP table.round (do NOT null it): `revealed` must stay true so the beat shows every hand + the
+  // loser highlight. The round is cleared only at the next dealAgain/newGame.
 
   // --- BUMP (accepted path): advance the phase token so the next stale revealAll copy mismatches. Kept
   // adjacent to the checkPhaseToken above so guard+advance reads as one unit (deferred-work #117). ---
-  bumpPhaseToken(host.table);
+  bumpPhaseToken(table);
 
-  // --- PERSIST: the durable summary now carries phase:"showdown" + the bumped token; `round` (incl.
-  // `revealed`) is dropped by toSummary (memory-only). The per-device fan-out is dispatch's job. ---
-  await persistSummary(host.storage, host.table);
+  // --- PERSIST: the durable summary now carries phase:"roundResult"/"gameOver" + loserIds/winnerIds +
+  // nextStartingPlayerId + the bumped token; `round` (incl. `revealed`) is dropped by toSummary
+  // (memory-only). A reload coerces a lost round to roundResult and keeps the persisted result so the
+  // Host can still re-deal the correct Loser. The per-device fan-out is dispatch's job. ---
+  await persistSummary(host.storage, table);
+}
+
+/**
+ * handleDealAgain — the between-rounds re-deal (Story 3.4, FR-12). The Host taps Re-deal at `roundResult`;
+ * the server deals a fresh Round to the SURVIVING Players (eliminated excluded), seats the Loser of the
+ * round just resolved as the new Starting Player, clears the prior round's result, advances `roundResult →
+ * turns`, and persists. CLONES the handleDeal accepted-path chokepoint exactly, differing only in the phase
+ * gate and the Starting Player derivation:
+ *   shape → table-null → not-host → checkPhaseToken → phase(=="roundResult") → mutate → bumpPhaseToken → persist
+ *
+ * THE ≥2-ALIVE GUARANTEE (AC-3.4.6, edge E1): the phase gate `=== "roundResult"` IS the ≥2-alive guard —
+ * the win-check inside resolveShowdown (Story 3.1) sent every ≤1-alive outcome to `gameOver`, NEVER to
+ * `roundResult`. So a `dealAgain` at `gameOver` (or any non-roundResult phase) is rejected `phase-illegal`,
+ * and a Round can never start with <2 Players. NO new ErrorReason (the union is frozen).
+ *
+ * LOSER STARTS (AC-3.4.5, FR-12): the new Starting Player = `nextStartingPlayerId`, the resolved Loser the
+ * resolution stashed on TableState (the Story-3.1 step-6 tiebreak result; if that Loser was eliminated, the
+ * next surviving seat to their right — computed at resolution). It is PERSISTED in the durable summary, so a
+ * roundResult reload (eviction/crash) still re-deals the correct Loser instead of mis-seating. There is no
+ * hostId fallback: a missing starter at roundResult is a resolution/persist invariant breach and throws
+ * loudly. dealRound deals `isAlive` seats only and self-asserts an alive/seated starter (3.1 Action-4
+ * hardening), so a stale/eliminated id throws a plain Error (a server bug, not a client-rejectable intent).
+ *
+ * `callerPlayerId` is the connection's stamp (dispatch passes `connection.state?.playerId`) — an unstamped
+ * socket → undefined → `!== hostId` → `not-host`. [Source: epics.md#Story 3.4; architecture.md#Phase
+ * roundResult→dealAgain→turns 588; handleDeal accepted-path precedent; engine.dealRound/resolveShowdown.]
+ */
+export async function handleDealAgain(
+  host: TableHost,
+  // Same grouped-member Extract as handleDeal/handleReveal (deal/revealAll/dealAgain/newGame share the
+  // {phaseToken} payload). dispatch's `case "dealAgain"` guarantees the variant here.
+  intent: Extract<Intent, { type: "deal" | "revealAll" | "dealAgain" | "newGame" }>,
+  callerPlayerId: string | undefined,
+): Promise<void> {
+  // --- ACCEPTED-PATH PRE-CHECK (AC-3.4.6/.7): shape → table-null → not-host → checkPhaseToken → phase
+  // (=== "roundResult"). The `roundResult` gate IS the ≥2-alive guard (edge E1): the win-check sent every
+  // ≤1-alive outcome to gameOver, so a dealAgain at gameOver (or any other phase) → `phase-illegal`. The
+  // double-tap ordering (token before phase gate) lives in the shared helper. ---
+  requirePhaseConductor(host, intent, callerPlayerId, "roundResult");
+  const table = host.table!; // requirePhaseConductor proved it non-null.
+
+  // --- MUTATE: the new Starting Player = the resolved Loser stashed at reveal (Loser starts — FR-12),
+  // persisted in the durable summary so a roundResult reload re-deals the correct Loser (not hostId). Deal
+  // a fresh Round to the surviving Players (dealRound deals isAlive seats only — eliminated excluded, FR-11;
+  // it self-asserts an alive/seated starter, so a stale id throws rather than mis-seats). Clear the prior
+  // round's result, advance to `turns`. nextStartingPlayerId is ALWAYS set on a real roundResult continue
+  // outcome (handleReveal sets it) and survives a reload (persisted) — so no hostId fallback is needed;
+  // letting dealRound's assert fire on an impossible-undefined keeps a resolution bug LOUD instead of
+  // masking it behind a wrong-but-valid starter. ---
+  if (table.nextStartingPlayerId === undefined) {
+    // Defense-in-depth: a roundResult with no stashed/persisted starter is a server-side invariant
+    // breach (resolution always sets it; persistence always carries it). Surface it loudly rather than
+    // silently seating the host. Plain Error → dispatch's catch logs + closes (a server bug, not a
+    // client-rejectable intent — same class as the dealRound asserts).
+    throw new Error("handleDealAgain: roundResult has no nextStartingPlayerId (resolution/persist invariant breach)");
+  }
+  const startingPlayerId = table.nextStartingPlayerId;
+  table.round = dealRound(table.players, DEAL_COMPOSITION, cryptoRng(), startingPlayerId);
+  table.phase = "turns";
+  table.loserIds = undefined; // clear the between-round result (a new round has no result yet).
+  table.winnerIds = undefined;
+  table.nextStartingPlayerId = undefined; // consumed.
+
+  // --- BUMP (accepted path): advance the phase token so the next stale dealAgain copy mismatches. Kept
+  // adjacent to the checkPhaseToken above so guard+advance reads as one unit (deferred-work #117). ---
+  bumpPhaseToken(table);
+
+  // --- PERSIST: the durable summary now carries phase:"turns" + the bumped token + the cleared result;
+  // `round` is dropped by toSummary (memory-only). The per-device fan-out is dispatch's job. ---
+  await persistSummary(host.storage, table);
 }
 
 /**
@@ -528,6 +597,59 @@ function requireActiveTurn(
   checkTurnToken(host.table.round, intent.payload.turnToken);
 
   return host.table.round;
+}
+
+/**
+ * Shared accepted-path PRE-CHECK for the PHASE-scoped host-conducted handlers (Story 2.3 deal; reused by
+ * 3.2 revealAll and 3.4 dealAgain). Runs the EXACT order handleDeal set as the precedent — the phase-scope
+ * analog of {@link requireActiveTurn} — and returns nothing (the caller reads `host.table` directly, now
+ * proven non-null by this guard):
+ *   shape → table-null → not-host → checkPhaseToken → phase(=== expectedPhase)
+ *
+ * ORDERING IS LOAD-BEARING: `checkPhaseToken` runs BEFORE the phase gate so a benign double-tap surfaces
+ * as `stale-phase` (silently swallowed by the client, Story 2.2) rather than `phase-illegal` — and the
+ * shape guard runs FIRST so a missing/non-finite phaseToken rejects cleanly as `phase-illegal` instead of
+ * throwing a raw TypeError inside checkPhaseToken (which would escape as a non-IntentError and hang the
+ * client). Centralizing the order here keeps the three callers (deal/revealAll/dealAgain) from drifting.
+ *
+ * `callerPlayerId` is the connection's stamp (dispatch passes `connection.state?.playerId`) — an unstamped
+ * socket → undefined → `!== hostId` → `not-host`. [Source: handleDeal accepted-path order; NFR-2/NFR-5.]
+ */
+function requirePhaseConductor(
+  host: TableHost,
+  // The Intent union groups deal/revealAll/dealAgain/newGame in ONE member (shared {phaseToken} payload),
+  // so Extract by a single literal would be `never`; the caller's dispatch `case` guarantees the variant.
+  intent: Extract<Intent, { type: "deal" | "revealAll" | "dealAgain" | "newGame" }>,
+  callerPlayerId: string | undefined,
+  expectedPhase: TableState["phase"],
+): void {
+  // --- SHAPE GUARD (lightweight, Decision #1): a missing / non-finite phaseToken would throw a raw
+  // TypeError in checkPhaseToken (NOT an IntentError → dispatch rethrows → client hangs). Reject the
+  // malformed shape cleanly as phase-illegal. ---
+  if (typeof intent.payload?.phaseToken !== "number" || !Number.isFinite(intent.payload.phaseToken)) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- table-null (defensive): an unclaimed DO has no round to conduct. ---
+  if (host.table === null) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- not-host (NFR-2): only the Host conducts a phase transition (server-authoritative). A crafted
+  // copy from a guest is refused even at the expected phase. ---
+  if (callerPlayerId !== host.table.hostId) {
+    throw new IntentError("not-host");
+  }
+
+  // --- GUARD the phase token FIRST among the contentious checks (double-tap): a second copy carries the
+  // same now-stale token → `stale-phase`, BEFORE any mutation. The token check precedes the phase gate so
+  // a benign double-tap surfaces as `stale-phase` (silently swallowed) rather than `phase-illegal`. ---
+  checkPhaseToken(host.table, intent.payload.phaseToken);
+
+  // --- phase gate: the intent is accepted ONLY at its expected phase. Any other phase → `phase-illegal`. ---
+  if (host.table.phase !== expectedPhase) {
+    throw new IntentError("phase-illegal");
+  }
 }
 
 /**

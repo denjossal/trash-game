@@ -1,11 +1,11 @@
 // dispatch.ts — intent router + phase-legality; the single try/catch that turns an IntentError into a
 // targeted `error` event. [Source: architecture.md#Canonical-round-trip, #The-rules table — single-error-catch-site]
 //
-// SCOPE (Story 1.6 → 1.7 → 1.8 → 2.3 → 2.4 → 2.6 → 3.2): routes createRoom + joinRoom + hostSetLives +
-// deal + swap + keep + drawFromDeck + revealAll (the Showdown trigger — Story 3.2). The remaining gameplay
-// intents (dealAgain/newGame/hostRemovePlayer/hostReassign — Stories 3.4/3.6/4.x) are routed to an
-// explicit not-yet-implemented rejection, NEVER silently accepted. The ONE try/catch lives here; handlers
-// throw IntentError and never send.
+// SCOPE (Story 1.6 → 1.7 → 1.8 → 2.3 → 2.4 → 2.6 → 3.2 → 3.4): routes createRoom + joinRoom + hostSetLives +
+// deal + swap + keep + drawFromDeck + revealAll (the Showdown trigger — Story 3.2) + dealAgain (the between-
+// rounds re-deal — Story 3.4). The remaining gameplay intents (newGame/hostRemovePlayer/hostReassign —
+// Stories 3.6/4.x) are routed to an explicit not-yet-implemented rejection, NEVER silently accepted. The ONE
+// try/catch lives here; handlers throw IntentError and never send.
 //
 // LOBBY VALIDATION (Decision #1, AC-1.6.3/1.7.5/1.8.3): lobby-phase intents (createRoom, joinRoom,
 // hostSetLives) are guarded by lightweight phase-checking + the Durable Object's single-threaded
@@ -25,6 +25,7 @@ import { IntentError } from "@trash/shared";
 import {
   handleCreateRoom,
   handleDeal,
+  handleDealAgain,
   handleDraw,
   handleHostSetLives,
   handleJoinRoom,
@@ -143,8 +144,20 @@ export async function dispatch(host: TableHost, connection: DispatchConnection, 
         fanOut(host.connections(), host.table!);
         return;
       }
+      case "dealAgain": {
+        // The Host re-deals between rounds (Story 3.4, FR-12). The handler runs the PHASE-scoped accepted-
+        // path chokepoint (shape → table-null → not-host → checkPhaseToken → phase=="roundResult" → deal
+        // survivors with the resolved Loser as Starting Player → clear result → phase=turns → bumpPhaseToken
+        // → persist), cloning handleDeal. On a non-Host / stale double-tap / wrong-phase (incl. gameOver) it
+        // throws (not-host / stale-phase / phase-illegal) BEFORE this line → the single try/catch emits a
+        // targeted `error` with NO fan-out. On success we fan out so every device transitions to the freshly
+        // dealt `turns` round TOGETHER, each receiving ONLY its own Card via projectStateFor (SM-6).
+        await handleDealAgain(host, intent, connection.state?.playerId);
+        fanOut(host.connections(), host.table!);
+        return;
+      }
       // --- NOT yet implemented — explicit rejection, never a silent accept. ---
-      // dealAgain/newGame (Stories 3.4/3.6) / hostRemovePlayer/hostReassign (Epic 4).
+      // newGame (Story 3.6) / hostRemovePlayer/hostReassign (Epic 4).
       default:
         throw new IntentError("phase-illegal");
     }
