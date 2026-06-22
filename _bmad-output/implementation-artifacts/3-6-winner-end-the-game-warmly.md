@@ -4,7 +4,7 @@ baseline_commit: 0219e38
 
 # Story 3.6: Winner — end the game warmly
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
