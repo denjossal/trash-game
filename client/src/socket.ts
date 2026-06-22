@@ -187,6 +187,13 @@ export function createSocket(room: string): PartySocket {
   return new PartySocket({
     host,
     room,
+    // party MUST be "table" to match the server's DO binding. partyserver kebab-cases the binding name
+    // `Table` → routes ONLY `/parties/table/<room>`; partysocket defaults `party` to "main" when omitted
+    // (→ /parties/main/<room>), which the server does NOT route — every real browser connection would be
+    // refused. Caught by the Playwright e2e harness (Epic 2 retro action 3); this is deferred-work #24/#50
+    // ("kebab-case routing untested; client may hit the wrong path") made concrete. [server/src/index.ts
+    // routePartykitRequest; multi-device-join.mjs uses /parties/table/<code>.]
+    party: "table",
     maxRetries: 0, // RECONNECT DISABLED (AR-12 / §11.3) — see doc comment above.
   });
 }
