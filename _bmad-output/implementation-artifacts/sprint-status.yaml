@@ -1,4 +1,5 @@
 # generated: 2026-06-19
+# last_updated: 2026-06-22 (2-5 → ready-for-dev create-story: CLIENT-ONLY peek — new pure card-display.ts (SOLE rank→letter map home 1→A…13→K, suit by shape not color), new display-only Card.svelte (face-down neon back ↔ Display-XL face, REUSE-bound for Epic 3 showdown), YourTurn.svelte peek PLACEHOLDER → real press-and-hold + auto-hide ($state revealed, pointerdown/up/leave/blur/visibilitychange/pagehide, $effect teardown) + SR announce-once owner-only; revealed is LOCAL UI-only, NO peek intent/no send/no server/no contract change; AC-2.5.3 a11y-tree-absent via {#if revealed}; AC-2.5.2 background/pagehide manual/Playwright (no harness yet); standing SWAP/KEEP focus-order + SM-6 untouched)
 # last_updated: 2026-06-20 (2-4 → review dev-story: swap/keep — pure applySwap/applyKeep (reuse nextAliveSeat, unconditional King-free exchange), handleSwap/handleKeep first TURN-scope consumer w/ #123 null-round gate + no-persist, justReceivedSwap value-free producer (memory-only Round.lastSwapReceiverId), real YourTurn 2-button hero + Waiting surfaces + sendSwap/sendKeep; King social-only behavioral standing test; +23 server/+13 client tests; allActed deferred to 2.6; gates green)
 # last_updated: 2026-06-20 (2-4 → in-progress dev-story)
 # last_updated: 2026-06-20 (2-4 → ready-for-dev create-story: first full-stack gameplay slice — pure applySwap/applyKeep reusing nextAliveSeat, handleSwap/handleKeep on the TURN scope (checkTurnToken/bumpTurnToken first consumer, not-your-turn, null-round gate #123, no-persist), justReceivedSwap value-free producer, King social-only standing test (FR-8); real YourTurn (2-button hero ≥72px+pulse frame+a11y) & Waiting surfaces + sendSwap/sendKeep seams; allActed deferred to 2.6, peek reveal to 2.5)
@@ -66,7 +67,7 @@
 # - Open product decision M1 (hostSetLives clamp-vs-top-up) due before Epic 4 / Story 4-2.
 
 generated: 2026-06-19
-last_updated: 2026-06-20
+last_updated: 2026-06-22 (2-5 → review dev-story: CLIENT-ONLY peek — new pure card-display.ts (rankToLetter SOLE home + rankSpeech/cardSpeech), new display-only Card.svelte (face-down neon back ↔ Display-XL face; rank absent from a11y tree while hidden via {#if revealed}; reuse-bound for Epic 3), YourTurn.svelte peek placeholder → real press-and-hold + auto-hide (blur/visibilitychange/pagehide, $effect teardown) + owner-only SR announce-once; revealed is local $state, NO peek intent/no send/no server/no contract change; state prop renamed proj to dodge $state-rune collision; +18 client tests (76), server 112 unchanged; lint/typecheck/build green; AC-2.5.2 background/pagehide manual-confirmed, blur jsdom-tested)
 # refreshed by sprint-planning 2026-06-20
 project: trash-game
 project_key: NOKEY
@@ -101,7 +102,7 @@ development_status:
   2-2-two-scope-monotonic-guard-built-whole: done
   2-3-deal-secret-cards-and-simultaneous-dealt-state: done
   2-4-take-a-turn-swap-or-keep-the-two-button-hero: review
-  2-5-peek-your-own-card: backlog
+  2-5-peek-your-own-card: review
   2-6-last-player-option-swap-or-draw-from-the-deck: backlog
   epic-2-retrospective: optional
 
