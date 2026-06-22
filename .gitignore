@@ -20,6 +20,12 @@ client/dev-dist/
 # TS build info
 *.tsbuildinfo
 
+# Playwright e2e (Epic 2 retro action 3) — artifacts only; specs + config under client/e2e ARE tracked.
+client/test-results/
+client/playwright-report/
+client/blob-report/
+client/.playwright/
+
 # BMad tooling — local dev workflow, not part of the project source.
 # (Planning + implementation artifacts under _bmad-output/ ARE tracked.)
 /.claude/

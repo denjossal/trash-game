@@ -97,6 +97,20 @@ export default tseslint.config(
     rules: { "no-restricted-properties": broadcastOnlyBan },
   },
 
+  // Playwright e2e harness (client/e2e/**) — same class as the .do.test.ts WS harness above. The aux
+  // socket is a CLIENT WebSocket driving client→server intents (createRoom/deal/keep) to set up a dealt
+  // round — it carries NO server-side game state, so `.send` is allowed (`.broadcast` still banned;
+  // SM-6's server-egress chokepoint push-state.ts is untouched). `any` is relaxed because the harness
+  // reads UNTYPED wire snapshots off raw sockets (the projection shape is asserted by the real client,
+  // not re-typed here). Specs/config under client/e2e are tracked; this is dev-only test tooling.
+  {
+    files: ["client/e2e/**/*.ts"],
+    rules: {
+      "no-restricted-properties": broadcastOnlyBan,
+      "@typescript-eslint/no-explicit-any": "off",
+    },
+  },
+
   // GATE 2 — purity of the rule engine.
   {
     files: ["server/src/rules/**/*.ts"],

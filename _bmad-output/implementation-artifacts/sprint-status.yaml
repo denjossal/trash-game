@@ -1,3 +1,5 @@
+# last_updated: 2026-06-22 (epic-2-retrospective → done: retro saved epic-2-retro-2026-06-22.md — Epic 2 "Play a Round" fully closed; 3 action items (code-review-close-flips-status, Playwright e2e harness BEFORE Epic 3 [CRITICAL gate — discharges AC-2.3.4/2.4.5/2.5.2 manual + Epic-1 concurrency carry-forward], dealAgain engine-primitive pre-flight); no significant discoveries — Epic 3 plan stands)
+# last_updated: 2026-06-22 (retrospective prep: 2-4/2-5/2-6 review→done + epic-2 in-progress→done — all three carried "+ code review" commits w/ closed verdicts (2-4/2-5 merged via PR #13/#14, 2-6 on branch); tracking had lagged behind shipped reviews; Epic 2 "Play a Round" now fully closed)
 # generated: 2026-06-19
 # last_updated: 2026-06-22 (2-6 → review dev-story: Epic-2-closing draw-from-deck shipped — pure applyDraw (top-of-shuffled-deck, value-free SM-6 (b)) + allAlivePlayersActed + isLastPlayer engine helpers; handleDraw (reuses requireActiveTurn + last-player authority, the ONE persisting turn handler); shared maybeCompletePass fires turns→allActed on the final action of ANY kind (swap/keep/draw by last seat) + CLEARS currentTurnId (router-leak fix) — handleSwap/handleKeep now last-seat-aware while mid-pass stays turns+no-persist (2.4 regression contract holds); real you.isLastPlayer in projector (was hardcoded false); drawFromDeck dispatch route; client buildDrawIntent+sendDraw+DRAW copy + last-player-only Button variant=secondary in YourTurn (keyed on isLastPlayer, after SWAP/KEEP); NO types.ts/contract change; +28 server (140) / +4 client (80) tests; lint+typecheck+build green; SM-6 standing test + 2.4 swap DO test unchanged; deferred-work SM-6 (b)/(c) closed)
 # last_updated: 2026-06-22 (2-6 → ready-for-dev create-story: Epic-2-closing full-stack slice — pure applyDraw (top-of-already-shuffled-deck, no rng/no rank read = SM-6 (b) timing-indistinguishable), +allAlivePlayersActed +isLastPlayer engine helpers; handleDraw = the ONE turn handler that PERSISTS (phase turns→allActed + bumpPhaseToken) reusing requireActiveTurn + a last-player server-authority check; the turns→allActed transition fires on the FINAL turn action of ANY kind via a shared completion step — handleSwap/handleKeep become last-seat-aware (non-final stays turns+no-persist = 2.4 regression contract); real you.isLastPlayer in projectStateFor replacing hardcoded false (nextAliveSeat(you)===startingPlayerId, value-free); route drawFromDeck in dispatch; sendDraw + buildDrawIntent + DRAW copy; subordinate last-player-only Draw button in YourTurn (keyed on proj.you.isLastPlayer, NOT a rank); 🚨 MUST clear currentTurnId on allActed or Starting Player hits a phantom yourTurn [route-from-state.ts:63]; NO types.ts change (drawFromDeck/allActed/isLastPlayer pre-named in 1.3); SM-6 channels (b)+(c) explicit ACs)
@@ -99,14 +101,14 @@ development_status:
   epic-1-retrospective: done
 
   # --- Epic 2: Play a Round ---
-  epic-2: in-progress
+  epic-2: done
   2-1-deck-build-and-seeded-shuffle-pure-parameterized: done
   2-2-two-scope-monotonic-guard-built-whole: done
   2-3-deal-secret-cards-and-simultaneous-dealt-state: done
-  2-4-take-a-turn-swap-or-keep-the-two-button-hero: review
-  2-5-peek-your-own-card: review
-  2-6-last-player-option-swap-or-draw-from-the-deck: review
-  epic-2-retrospective: optional
+  2-4-take-a-turn-swap-or-keep-the-two-button-hero: done
+  2-5-peek-your-own-card: done
+  2-6-last-player-option-swap-or-draw-from-the-deck: done
+  epic-2-retrospective: done
 
   # --- Epic 3: The Showdown ---
   epic-3: backlog

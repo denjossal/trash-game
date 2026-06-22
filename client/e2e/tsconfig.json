@@ -1,0 +1,16 @@
+{
+  // Separate tsconfig for the Playwright e2e specs — they run in Node (not the browser bundle), use
+  // Playwright + Node globals, and must stay OUT of the client `src/**` build typecheck (client/tsconfig
+  // includes only src/**). This file is for editor/`tsc --noEmit` checking of the e2e tree only.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "moduleResolution": "Bundler",
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "noEmit": true,
+    "composite": false,
+    "verbatimModuleSyntax": false
+  },
+  "include": ["**/*.ts"]
+}
