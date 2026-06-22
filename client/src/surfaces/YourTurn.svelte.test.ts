@@ -9,8 +9,9 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
-import { JUST_SWAPPED, KEEP, SWAP, YOUR_TURN } from "../lib/copy";
+import { JUST_SWAPPED, KEEP, PEEK_HINT, SWAP, YOUR_TURN } from "../lib/copy";
 import { DEBOUNCE_MS } from "../lib/interaction";
+import { cardSpeech } from "../lib/card-display";
 
 const sendSwap = vi.fn();
 const sendKeep = vi.fn();
@@ -115,5 +116,100 @@ describe("YourTurn surface", () => {
     render(YourTurn, { props: { state: state() } });
     // Beto's seat / card never appears on the active player's surface.
     expect(screen.queryByText("Beto")).toBeNull();
+  });
+});
+
+describe("YourTurn — peek your own card (Story 2.5, AC-2.5.1/.2/.3/.4/.5)", () => {
+  function peekControl(): HTMLElement {
+    return screen.getByRole("button", { name: PEEK_HINT });
+  }
+
+  it("the peek control is a real <button> AFTER SWAP/KEEP (the 2.4 focus-order contract holds)", () => {
+    render(YourTurn, { props: { state: state() } });
+    const buttons = screen.getAllByRole("button");
+    expect(buttons[0].getAttribute("aria-label")).toBe(SWAP);
+    expect(buttons[1].getAttribute("aria-label")).toBe(KEEP);
+    // The peek control is present and is NOT one of the first two focus stops.
+    expect(buttons.some((b) => b.getAttribute("aria-label") === PEEK_HINT)).toBe(true);
+    expect(buttons[0].getAttribute("aria-label")).not.toBe(PEEK_HINT);
+    expect(buttons[1].getAttribute("aria-label")).not.toBe(PEEK_HINT);
+  });
+
+  it("DEFAULT (no press): the own-card rank is NOT in the accessibility tree (AC-2.5.3)", () => {
+    render(YourTurn, { props: { state: state({ you: { ...state().you, hand: { rank: 13, suit: "♠" } } }) } });
+    // Face-down resting state — the rank node does not exist until a peek.
+    expect(screen.queryByText("K")).toBeNull();
+    expect(screen.queryByText("♠")).toBeNull();
+  });
+
+  it("PRESS-AND-HOLD reveals the own card; RELEASE re-hides it immediately (AC-2.5.1)", async () => {
+    render(YourTurn, { props: { state: state({ you: { ...state().you, hand: { rank: 13, suit: "♠" } } }) } });
+    const peek = peekControl();
+
+    await fireEvent.pointerDown(peek);
+    expect(screen.getByText("K")).toBeTruthy(); // 13 → K (via the letter map)
+    expect(screen.getByText("♠")).toBeTruthy();
+
+    await fireEvent.pointerUp(peek);
+    expect(screen.queryByText("K")).toBeNull(); // released → re-hidden immediately, never persistent
+  });
+
+  it("pointercancel / pointerleave also re-hide (a drag off the control never leaves it revealed)", async () => {
+    render(YourTurn, { props: { state: state({ you: { ...state().you, hand: { rank: 5, suit: "♥" } } }) } });
+    const peek = peekControl();
+
+    await fireEvent.pointerDown(peek);
+    expect(screen.getByText("5")).toBeTruthy();
+    await fireEvent.pointerLeave(peek);
+    expect(screen.queryByText("5")).toBeNull();
+
+    await fireEvent.pointerDown(peek);
+    expect(screen.getByText("5")).toBeTruthy();
+    await fireEvent.pointerCancel(peek);
+    expect(screen.queryByText("5")).toBeNull();
+  });
+
+  it("BLUR re-hides the peeked card (a phone set down never exposes a hand — AC-2.5.2)", async () => {
+    render(YourTurn, { props: { state: state({ you: { ...state().you, hand: { rank: 5, suit: "♥" } } }) } });
+    const peek = peekControl();
+    await fireEvent.pointerDown(peek);
+    expect(screen.getByText("5")).toBeTruthy();
+    await fireEvent.blur(peek);
+    expect(screen.queryByText("5")).toBeNull();
+  });
+
+  it("SR announce-once: activating the peek announces the rank ONCE, then the live region is cleared (AC-2.5.4)", async () => {
+    const hand = { rank: 13, suit: "♠" } as const;
+    render(YourTurn, { props: { state: state({ you: { ...state().you, hand } }) } });
+    const peek = peekControl();
+
+    // The SR live region exists and is empty until activation (no persistent readable rank).
+    const region = document.querySelector('[data-testid="peek-announce"]') as HTMLElement;
+    expect(region).toBeTruthy();
+    expect(region.textContent).toBe("");
+
+    await fireEvent.pointerDown(peek);
+    expect(region.textContent).toBe(cardSpeech(hand)); // "King of spades" — announced once, owner-only
+
+    await fireEvent.pointerUp(peek);
+    expect(region.textContent).toBe(""); // discarded — never a persistent readable node
+  });
+
+  it("peeking sends NOTHING to the server (peeking is LOCAL UI-only state — architecture rule)", async () => {
+    render(YourTurn, { props: { state: state({ you: { ...state().you, hand: { rank: 9, suit: "♦" } } }) } });
+    const peek = peekControl();
+    await fireEvent.pointerDown(peek);
+    await fireEvent.pointerUp(peek);
+    expect(sendSwap).not.toHaveBeenCalled();
+    expect(sendKeep).not.toHaveBeenCalled();
+  });
+
+  it("guards a missing own hand (early/odd projection) without throwing", () => {
+    const base = state();
+    expect(() =>
+      render(YourTurn, {
+        props: { state: { ...base, you: { ...base.you, hand: undefined } } },
+      }),
+    ).not.toThrow();
   });
 });
