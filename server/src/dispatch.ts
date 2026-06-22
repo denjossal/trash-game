@@ -1,11 +1,11 @@
 // dispatch.ts — intent router + phase-legality; the single try/catch that turns an IntentError into a
 // targeted `error` event. [Source: architecture.md#Canonical-round-trip, #The-rules table — single-error-catch-site]
 //
-// SCOPE (Story 1.6 → 1.7 → 1.8 → 2.3 → 2.4 → 2.6): routes createRoom + joinRoom + hostSetLives + deal +
-// swap + keep + drawFromDeck (all three turn-scoped gameplay intents — Stories 2.4/2.6). The remaining
-// gameplay intents (revealAll/dealAgain/newGame/hostRemovePlayer/hostReassign — Epics 3–4) are routed to
-// an explicit not-yet-implemented rejection, NEVER silently accepted. The ONE try/catch lives here;
-// handlers throw IntentError and never send.
+// SCOPE (Story 1.6 → 1.7 → 1.8 → 2.3 → 2.4 → 2.6 → 3.2): routes createRoom + joinRoom + hostSetLives +
+// deal + swap + keep + drawFromDeck + revealAll (the Showdown trigger — Story 3.2). The remaining gameplay
+// intents (dealAgain/newGame/hostRemovePlayer/hostReassign — Stories 3.4/3.6/4.x) are routed to an
+// explicit not-yet-implemented rejection, NEVER silently accepted. The ONE try/catch lives here; handlers
+// throw IntentError and never send.
 //
 // LOBBY VALIDATION (Decision #1, AC-1.6.3/1.7.5/1.8.3): lobby-phase intents (createRoom, joinRoom,
 // hostSetLives) are guarded by lightweight phase-checking + the Durable Object's single-threaded
@@ -29,6 +29,7 @@ import {
   handleHostSetLives,
   handleJoinRoom,
   handleKeep,
+  handleReveal,
   handleSwap,
   type TableHost,
 } from "./handlers.js";
@@ -128,8 +129,22 @@ export async function dispatch(host: TableHost, connection: DispatchConnection, 
         fanOut(host.connections(), host.table!);
         return;
       }
+      case "revealAll": {
+        // The Host triggers the simultaneous Showdown reveal (Story 3.2, FR-9). The handler runs the
+        // PHASE-scoped accepted-path chokepoint (shape → table-null → not-host → checkPhaseToken →
+        // phase=="allActed" → revealed=true + phase=showdown → bumpPhaseToken → persist), consuming the
+        // existing Epic-2 phase token (no new guard). On a reveal before allActed / a non-Host / a stale
+        // double-tap it throws (phase-illegal / not-host / stale-phase) BEFORE this line → the single
+        // try/catch emits a targeted `error` with NO fan-out, and nothing is revealed (reveal-finality,
+        // NFR-5). On success we fan out so every device flips TOGETHER to `showdown`; because
+        // round.revealed is now true, each per-device projection includes EVERY seat's hand — the first
+        // moment a non-owner receives another Player's Card (SM-6 extended via projectStateFor, Decision #3).
+        await handleReveal(host, intent, connection.state?.playerId);
+        fanOut(host.connections(), host.table!);
+        return;
+      }
       // --- NOT yet implemented — explicit rejection, never a silent accept. ---
-      // revealAll/dealAgain/newGame/hostRemovePlayer/hostReassign (Epics 3–4).
+      // dealAgain/newGame (Stories 3.4/3.6) / hostRemovePlayer/hostReassign (Epic 4).
       default:
         throw new IntentError("phase-illegal");
     }

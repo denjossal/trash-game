@@ -396,6 +396,86 @@ export async function handleDeal(
 }
 
 /**
+ * handleReveal — the Host triggers the simultaneous Showdown reveal (Story 3.2, FR-9). The SECOND
+ * PHASE-scope consumer (handleDeal was the first). Accepts the Host's `revealAll` ONLY at `allActed`
+ * (the one phase where every Card is final but still hidden — the reveal-finality property NFR-5), flips
+ * `round.revealed = true`, advances `allActed → showdown`, bumps the phase token, and persists. The
+ * accepted-path order CLONES handleDeal exactly, differing only in the phase gate and the mutation:
+ *   shape → table-null → not-host → checkPhaseToken → phase(=="allActed") → mutate → bumpPhaseToken → persist
+ *
+ * REVEAL-FINALITY (NFR-5, AC-3.2.2): the `allActed`-only gate guarantees no Card flips while any Card is
+ * still mutable. By the time `phase === "allActed"` the one pass is complete — `maybeCompletePass` has
+ * already cleared `currentTurnId` and every `isAlive` seat is in `round.acted`, and `requireActiveTurn`
+ * rejects any further swap/keep/draw (`phase !== "turns"` → `phase-illegal`). So a reveal at `allActed`
+ * sees only final cards. A `revealAll` in any other phase → `phase-illegal`; a double-tapped/stale one →
+ * `stale-phase` (the token bumped on the accepted reveal). Both are rejected BEFORE the mutation.
+ *
+ * SCOPE (AC-3.2.6): this handler ONLY flips `revealed` and lands in `showdown`. It does NOT call
+ * `resolveShowdown`, deduct Lives, mark eliminations, or set loserIds/winnerIds, and it does NOT
+ * transition past `showdown` — the Showdown RESOLUTION (`showdown → roundResult | gameOver` via Story
+ * 3.1's pure `resolveShowdown`) is Story 3.4. Once `revealed` is true, `projectStateFor`'s existing
+ * `revealed` branch (project-state.ts) includes every seat's hand in each per-device payload — the first
+ * moment a non-owner receives another Player's Card value (SM-6 EXTENDED, not weakened — Decision #3).
+ *
+ * `callerPlayerId` is the connection's stamp (dispatch passes `connection.state?.playerId`) — an
+ * unstamped socket → undefined → `!== hostId` → `not-host`. [Source: epics.md#Story 3.2 695–713;
+ * architecture.md#Phase allActed→showdown 583; handleDeal accepted-path precedent; validate.ts:48–51.]
+ */
+export async function handleReveal(
+  host: TableHost,
+  // The Intent union groups deal/revealAll/dealAgain/newGame in ONE member (shared {phaseToken} payload),
+  // so Extract by a single literal would be `never`. dispatch's `case "revealAll"` guarantees the variant
+  // here (same as handleDeal's grouped-member note).
+  intent: Extract<Intent, { type: "deal" | "revealAll" | "dealAgain" | "newGame" }>,
+  callerPlayerId: string | undefined,
+): Promise<void> {
+  // --- SHAPE GUARD (lightweight, Decision #1 — mirrors handleDeal): a missing / non-finite phaseToken
+  // would throw a raw TypeError in checkPhaseToken (NOT an IntentError → dispatch rethrows → client
+  // hangs). Reject the malformed shape cleanly as phase-illegal. ---
+  if (typeof intent.payload?.phaseToken !== "number" || !Number.isFinite(intent.payload.phaseToken)) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- table-null (defensive): an unclaimed DO has no round to reveal. ---
+  if (host.table === null) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- not-host (AC-3.2.3): only the Host conducts the reveal (server-authoritative, NFR-2 — same as
+  // handleDeal/handleHostSetLives). A crafted revealAll from a guest is refused even at allActed. ---
+  if (callerPlayerId !== host.table.hostId) {
+    throw new IntentError("not-host");
+  }
+
+  // --- GUARD the phase token FIRST among the contentious checks (AC-3.2.2 double-tap): a second
+  // revealAll carries the same now-stale token → `stale-phase`, BEFORE any mutation. The token check
+  // precedes the phase gate so a benign double-tap surfaces as `stale-phase` (silently swallowed by the
+  // client, Story 2.2) rather than `phase-illegal` — the SAME ordering rationale as handleDeal. ---
+  checkPhaseToken(host.table, intent.payload.phaseToken);
+
+  // --- phase (AC-3.2.1/.2): revealAll is accepted ONLY at `allActed` — the one phase where every Card is
+  // final but still hidden. Any other phase → `phase-illegal` (reveal-finality NFR-5). At `allActed` a
+  // live round always exists (the pass just completed; a D2.1-coerced wake lands in roundResult, never
+  // allActed), so `round` is non-null past this gate. ---
+  if (host.table.phase !== "allActed" || host.table.round === null) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- MUTATE: flip the reveal and advance to `showdown` (the resolution showdown→roundResult|gameOver is
+  // Story 3.4). Once `revealed` is true, projectStateFor exposes every hand (Decision #3 — SM-6 extended). ---
+  host.table.round.revealed = true;
+  host.table.phase = "showdown";
+
+  // --- BUMP (accepted path): advance the phase token so the next stale revealAll copy mismatches. Kept
+  // adjacent to the checkPhaseToken above so guard+advance reads as one unit (deferred-work #117). ---
+  bumpPhaseToken(host.table);
+
+  // --- PERSIST: the durable summary now carries phase:"showdown" + the bumped token; `round` (incl.
+  // `revealed`) is dropped by toSummary (memory-only). The per-device fan-out is dispatch's job. ---
+  await persistSummary(host.storage, host.table);
+}
+
+/**
  * Shared accepted-path PRE-CHECK for the turn-scoped gameplay handlers (Story 2.4 swap/keep; reused by
  * 2.6 drawFromDeck). Runs the EXACT order handleDeal set as the precedent, adapted to the TURN scope,
  * and returns the validated `round` so the caller can mutate it:

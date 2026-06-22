@@ -1,5 +1,9 @@
 # Deferred Work
 
+## Deferred from: code review of story-3.2 (2026-06-22)
+
+- **`projectStateFor` reveal branch can assign `entry.hand = undefined` for a hand-less seat** [server/src/project-state.ts:61]. `if (revealed && round) entry.hand = round.hands[p.id]` iterates EVERY seat in `state.players`, but `dealRound` only populates `hands` for `isAlive` seats. Unreachable in Story 3.2 (eliminations occur only inside `resolveShowdown` on the `showdown → roundResult` transition, which is Story 3.4 and not yet wired — at `showdown`/`revealed` every seat is still alive and carries a hand). Becomes a real constant-shape violation (project-state.ts:49–51 JSDoc invariant) once Story 3.4 leaves eliminated seats in `players[]` while `revealed === true`. Fix when 3.4 lands: guard `round.hands[p.id] !== undefined` (or omit the key for hand-less seats). Pre-existing Story 1.4 code — NOT introduced by Story 3.2.
+
 ## Playwright e2e harness — Epic 2 retro action 3 (2026-06-22) + a REAL bug it caught
 
 > The Epic 2 retro (action 3) stood up a Chromium-only Playwright harness (`client/e2e/`, run via

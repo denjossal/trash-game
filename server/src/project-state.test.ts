@@ -255,3 +255,77 @@ test("2.6: deriving isLastPlayer leaks no card value (SM-6 re-pass for the new d
   expect(values.has(handB.rank)).toBe(false);
   for (const entry of projection.players) expect("hand" in entry).toBe(false);
 });
+
+// ---------------------------------------------------------------------------
+// Story 3.2 — reveal-true counterpart of the standing SM-6 test. Once `round.revealed` is true
+// (reachable only via a valid revealAll, this story), the SAME projectStateFor chokepoint INCLUDES
+// every seat's hand in `players[]`. This is the INVERSE of the AC3 negative assertion: the deep
+// value-walk now FINDS the other seats' ranks/suits. SM-6 is EXTENDED here (the revealed branch),
+// never weakened — the pre-reveal tests above stay green. [Source: epics.md#Story 3.2 AC; Decision #3.]
+// ---------------------------------------------------------------------------
+
+// A revealed (Showdown) round — identical to tableWithHands but `revealed: true` and phase `showdown`.
+function revealedTableWithHands(hands: Record<string, Card>): TableState {
+  const state = tableWithHands(hands);
+  state.round!.revealed = true;
+  state.round!.currentTurnId = ""; // active seat cleared at allActed→showdown (no live turn).
+  state.phase = "showdown";
+  return state;
+}
+
+test("3.2: a revealed projection includes EVERY seat's hand for any caller (reveal-true SM-6)", () => {
+  const handA: Card = { rank: 6, suit: "♠" };
+  const handB: Card = { rank: 9, suit: "♥" };
+  const handC: Card = { rank: 12, suit: "♦" };
+  const state = revealedTableWithHands({ A: handA, B: handB, C: handC });
+
+  // Project for A — once revealed, A now legitimately receives B's and C's cards too.
+  const projection = JSON.parse(JSON.stringify(projectStateFor(state, "A")));
+  expect(projection.revealed).toBe(true);
+  expect(projection.phase).toBe("showdown");
+
+  // Every seat in players[] now carries its hand (the constant key-set across seats — AC4 invariant).
+  const byId: Record<string, Card | undefined> = {};
+  for (const entry of projection.players) {
+    expect("hand" in entry).toBe(true);
+    byId[entry.id] = entry.hand;
+  }
+  expect(byId.A).toEqual(handA);
+  expect(byId.B).toEqual(handB);
+  expect(byId.C).toEqual(handC);
+
+  // The deep value-walk now FINDS the other seats' ranks AND suits (the inverse of AC3's absence).
+  const values = new Set<unknown>();
+  collectValues(projection, values);
+  expect(values.has(handB.rank)).toBe(true);
+  expect(values.has(handB.suit)).toBe(true);
+  expect(values.has(handC.rank)).toBe(true);
+  expect(values.has(handC.suit)).toBe(true);
+});
+
+test("3.2: the revealed projection is constant-shape across differing hand values", () => {
+  const first = revealedTableWithHands({
+    A: { rank: 6, suit: "♠" },
+    B: { rank: 9, suit: "♥" },
+    C: { rank: 12, suit: "♦" },
+  });
+  // Identical in every respect except the (now-visible) card values differ.
+  const second = revealedTableWithHands({
+    A: { rank: 1, suit: "♣" },
+    B: { rank: 13, suit: "♦" },
+    C: { rank: 5, suit: "♠" },
+  });
+
+  const projFirst = JSON.parse(JSON.stringify(projectStateFor(first, "A")));
+  const projSecond = JSON.parse(JSON.stringify(projectStateFor(second, "A")));
+
+  // Strip every legitimately-varying card field (own hand + each seat's now-visible hand).
+  delete projFirst.you.hand;
+  delete projSecond.you.hand;
+  for (const e of projFirst.players) delete e.hand;
+  for (const e of projSecond.players) delete e.hand;
+
+  // Same field-set, nesting, players[] length — no value-dependent shape branch at reveal either.
+  expect(projFirst).toEqual(projSecond);
+  expect(projFirst.players.length).toBe(projSecond.players.length);
+});
