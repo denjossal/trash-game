@@ -1,6 +1,16 @@
 import { expect, test } from "vitest";
 import type { Card, Player, Round } from "@trash/shared";
-import { applyKeep, applySwap, buildDeck, dealRound, nextAliveSeat, shuffle } from "./engine.js";
+import {
+  allAlivePlayersActed,
+  applyDraw,
+  applyKeep,
+  applySwap,
+  buildDeck,
+  dealRound,
+  isLastPlayer,
+  nextAliveSeat,
+  shuffle,
+} from "./engine.js";
 
 // A tiny deterministic PRNG (LCG) so a fixed seed yields a fixed permutation.
 // Returns a float in [0, 1) — matching shuffle's documented rng contract.
@@ -294,4 +304,159 @@ test("applySwap: skips an eliminated seat to find the right-hand neighbor (reuse
   expect(round.hands.A).toEqual({ rank: 10, suit: "♦" });
   expect(round.hands.C).toEqual({ rank: 2, suit: "♠" });
   expect(round.currentTurnId).toBe("C");
+});
+
+// ---- applyDraw (Story 2.6, AC-2.6.2, AC-2.6.4) ----------------------------
+// The Last Player's third action: replace the caller's hand with the TOP card of the (already crypto-
+// shuffled) deck, REMOVE that card from the deck for the rest of the round (the discarded old card is
+// dropped, not re-inserted), record the caller in `acted`, advance the turn right. PURE + value-free
+// (no rank read) — the randomness is the prior shuffle, never an rng inside applyDraw.
+
+/** A round with a known deck for the draw tests (roundWith defaults deck:[]). */
+function roundWithDeck(currentTurnId: string, hands: Record<string, Card>, deck: Card[]): Round {
+  return { ...roundWith(currentTurnId, hands), deck };
+}
+
+test("applyDraw: replaces the caller's hand with the top deck card and removes it from the deck", () => {
+  const players = [seat("A", 0), seat("B", 1)];
+  // Heads-up: A is starting/last-acting; B is the Last Player. Test the draw on B (the last seat).
+  const round = roundWithDeck(
+    "B",
+    { A: { rank: 4, suit: "♠" }, B: { rank: 2, suit: "♥" } },
+    [
+      { rank: 9, suit: "♦" },
+      { rank: 11, suit: "♣" },
+    ],
+  );
+  applyDraw(round, "B", players);
+  expect(round.hands.B).toEqual({ rank: 9, suit: "♦" }); // got the top card
+  expect(round.deck).toEqual([{ rank: 11, suit: "♣" }]); // top removed; rest preserved in order
+});
+
+test("applyDraw: the discarded (old) card is GONE — not re-inserted into the deck", () => {
+  const players = [seat("A", 0), seat("B", 1)];
+  const round = roundWithDeck("B", { A: { rank: 4, suit: "♠" }, B: { rank: 2, suit: "♥" } }, [
+    { rank: 9, suit: "♦" },
+  ]);
+  applyDraw(round, "B", players);
+  // The old card (2♥) must not appear anywhere in the remaining deck.
+  expect(round.deck.some((c) => c.rank === 2 && c.suit === "♥")).toBe(false);
+  expect(round.deck.length).toBe(0); // one card drawn out of one — deck now empty (mid-round shrink)
+});
+
+test("applyDraw: records the caller in acted and advances the turn right (to the starting player)", () => {
+  const players = [seat("A", 0), seat("B", 1)];
+  const round = roundWithDeck("B", { A: { rank: 4, suit: "♠" }, B: { rank: 2, suit: "♥" } }, [
+    { rank: 9, suit: "♦" },
+  ]);
+  applyDraw(round, "B", players);
+  expect(round.acted).toEqual(["B"]);
+  expect(round.currentTurnId).toBe("A"); // right-hand neighbor of the last seat is the starting player
+});
+
+test("applyDraw: clears any prior swap squirm transient (a new turn action supersedes it)", () => {
+  const players = [seat("A", 0), seat("B", 1)];
+  const round = roundWithDeck("B", { A: { rank: 4, suit: "♠" }, B: { rank: 2, suit: "♥" } }, [
+    { rank: 9, suit: "♦" },
+  ]);
+  round.lastSwapReceiverId = "B"; // a stale transient from a prior swap
+  applyDraw(round, "B", players);
+  expect(round.lastSwapReceiverId).toBeUndefined();
+});
+
+test("applyDraw: outcome is value-independent — same acted/turn/deck shape for any drawn or held rank (SM-6 (b))", () => {
+  // The draw must not depend on either card's value (no timing/behavioral tell on the hidden card).
+  for (const drawnRank of [1, 7, 13]) {
+    for (const heldRank of [1, 7, 13]) {
+      const players = [seat("A", 0), seat("B", 1)];
+      const round = roundWithDeck(
+        "B",
+        { A: { rank: 4, suit: "♠" }, B: { rank: heldRank, suit: "♥" } },
+        [{ rank: drawnRank, suit: "♦" }],
+      );
+      applyDraw(round, "B", players);
+      expect(round.acted).toEqual(["B"]);
+      expect(round.currentTurnId).toBe("A");
+      expect(round.hands.B).toEqual({ rank: drawnRank, suit: "♦" });
+      expect(round.deck.length).toBe(0);
+    }
+  }
+});
+
+// ---- allAlivePlayersActed (Story 2.6, AC-2.6.3) ---------------------------
+// The pure predicate for the turns → allActed transition: true when every isAlive player is in
+// round.acted. Uses isAlive (the Deal-snapshot alive set), never isConnected.
+
+test("allAlivePlayersActed: false mid-pass (not everyone has acted yet)", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  const round = roundWith("B", { A: { rank: 1, suit: "♠" }, B: { rank: 2, suit: "♥" }, C: { rank: 3, suit: "♦" } });
+  round.acted = ["A"]; // only A acted
+  expect(allAlivePlayersActed(round, players)).toBe(false);
+});
+
+test("allAlivePlayersActed: true when every alive player is in acted", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  const round = roundWith("A", { A: { rank: 1, suit: "♠" }, B: { rank: 2, suit: "♥" }, C: { rank: 3, suit: "♦" } });
+  round.acted = ["A", "B", "C"];
+  expect(allAlivePlayersActed(round, players)).toBe(true);
+});
+
+test("allAlivePlayersActed: ignores eliminated seats (they are not required to act — forward-compat 3.4)", () => {
+  // B is eliminated (no card, not alive). The pass is complete when A and C have acted.
+  const players = [seat("A", 0), seat("B", 1, false), seat("C", 2)];
+  const round = roundWith("A", { A: { rank: 1, suit: "♠" }, C: { rank: 3, suit: "♦" } });
+  round.acted = ["A", "C"];
+  expect(allAlivePlayersActed(round, players)).toBe(true);
+});
+
+test("allAlivePlayersActed: uses isAlive not isConnected — a disconnected-but-alive seat still owes a turn", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  players[1].isConnected = false; // B is offline but still alive
+  const round = roundWith("A", { A: { rank: 1, suit: "♠" }, B: { rank: 2, suit: "♥" }, C: { rank: 3, suit: "♦" } });
+  round.acted = ["A", "C"]; // B (alive but offline) has NOT acted
+  expect(allAlivePlayersActed(round, players)).toBe(false);
+});
+
+// ---- isLastPlayer (Story 2.6, AC-2.6.1, AC-2.6.5) -------------------------
+// The single active alive seat whose right-hand neighbor (nextAliveSeat) is the starting player.
+// Value-free (reads startingPlayerId + seatIndex only, never a card). Exactly one seat is true.
+
+test("isLastPlayer: true for the seat whose right-hand neighbor is the starting player", () => {
+  // Start = A, order A→B→C→(A). The Last Player is C (from C, the next alive seat is A = start).
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  const round = roundWith("A", { A: { rank: 1, suit: "♠" }, B: { rank: 2, suit: "♥" }, C: { rank: 3, suit: "♦" } });
+  expect(isLastPlayer(round, players, "C")).toBe(true);
+  expect(isLastPlayer(round, players, "A")).toBe(false);
+  expect(isLastPlayer(round, players, "B")).toBe(false);
+});
+
+test("isLastPlayer: heads-up (2 players) — the non-starter is the Last Player", () => {
+  // Start = A; B is the Last Player (from B the next alive seat is A = start).
+  const players = [seat("A", 0), seat("B", 1)];
+  const round = roundWith("A", { A: { rank: 1, suit: "♠" }, B: { rank: 2, suit: "♥" } });
+  expect(isLastPlayer(round, players, "B")).toBe(true);
+  expect(isLastPlayer(round, players, "A")).toBe(false);
+});
+
+test("isLastPlayer: skips eliminated seats — the last ALIVE seat before the starter is the Last Player", () => {
+  // Start = A; C eliminated. Order over alive {A,B,D}: A→B→D→(A). Last Player is D.
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2, false), seat("D", 3)];
+  const round = roundWith("A", { A: { rank: 1, suit: "♠" }, B: { rank: 2, suit: "♥" }, D: { rank: 4, suit: "♣" } });
+  expect(isLastPlayer(round, players, "D")).toBe(true);
+  expect(isLastPlayer(round, players, "C")).toBe(false); // eliminated seat is never the last player
+  expect(isLastPlayer(round, players, "B")).toBe(false);
+});
+
+test("isLastPlayer: exactly one alive seat is the Last Player", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2), seat("D", 3)];
+  const round = roundWith("B", {
+    A: { rank: 1, suit: "♠" },
+    B: { rank: 2, suit: "♥" },
+    C: { rank: 3, suit: "♦" },
+    D: { rank: 4, suit: "♣" },
+  });
+  const flags = players.map((p) => isLastPlayer(round, players, p.id));
+  expect(flags.filter(Boolean).length).toBe(1);
+  // Start = B → order B→C→D→A→(B). Last Player is A (from A the next alive is B = start).
+  expect(isLastPlayer(round, players, "A")).toBe(true);
 });

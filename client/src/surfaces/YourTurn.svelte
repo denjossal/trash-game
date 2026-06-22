@@ -3,8 +3,9 @@
   // live round when it is YOUR turn (route-from-state.ts: phase "turns" + currentTurnId === you).
   //
   // The surface: a neon active frame (gentle ~1.2s pulse; static under Reduce Motion), SWAP and KEEP as
-  // massive (>=72px) pill primaries in the thumb zone, and a peek control. Nothing else competes (NFR-9
-  // — no roster, no feed, no chat). All copy from copy.ts.
+  // massive (>=72px) pill primaries in the thumb zone, a peek control, and — for the Last Player ONLY
+  // (Story 2.6) — a subordinate Secondary "Draw from deck" button. Nothing else competes (NFR-9 — no
+  // roster, no feed, no chat). All copy from copy.ts.
   //
   // Accessibility (NFR-10, AC-2.4.7): SWAP and KEEP are the FIRST two focus stops (placed first in DOM /
   // reading order; the peek control follows). Each is a real <button> (Button.svelte) with role+state.
@@ -40,8 +41,8 @@
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
   import { cardSpeech } from "../lib/card-display";
-  import { JUST_SWAPPED, KEEP, PEEK_HINT, SWAP, YOUR_TURN } from "../lib/copy";
-  import { sendKeep, sendSwap } from "../lib/table-store.svelte";
+  import { DRAW, JUST_SWAPPED, KEEP, PEEK_HINT, SWAP, YOUR_TURN } from "../lib/copy";
+  import { sendDraw, sendKeep, sendSwap } from "../lib/table-store.svelte";
 
   // Renamed from `state` to `proj` to avoid the identifier colliding with the `$state` rune used below
   // (Svelte parses `$state` as a store auto-subscription on a variable literally named `state`).
@@ -85,6 +86,12 @@
   function keep(): void {
     sendKeep(turnToken);
   }
+  // The Last Player's third choice (Story 2.6, FR-7): draw a random Card from the Deck instead of
+  // swapping. Same fire-and-forget seam as swap/keep (server validates last-player authority + turn
+  // token, replaces the card, and enters allActed). Shown ONLY when the server says you.isLastPlayer.
+  function draw(): void {
+    sendDraw(turnToken);
+  }
 </script>
 
 <main class="surface">
@@ -114,6 +121,14 @@
   <div class="actions">
     <Button onclick={swap} ariaLabel={SWAP}>{SWAP}</Button>
     <Button onclick={keep} ariaLabel={KEEP}>{KEEP}</Button>
+    <!-- Last-Player ONLY (Story 2.6, FR-7, UX-DR5): a visually-subordinate Secondary "Draw from deck"
+         button AFTER SWAP/KEEP (the two-button hero stays the first two focus stops, AC-2.4.7). Keyed on
+         the value-free server field you.isLastPlayer — NEVER a card rank (SM-6 (c) — no behavioral tell).
+         Reuses Button variant="secondary" (the built-in subordinate treatment: tonal surface, inert
+         border, ≥48px, one-shot click debounce — the draw is a tap, not a hold like peek). -->
+    {#if proj.you.isLastPlayer}
+      <Button onclick={draw} variant="secondary" ariaLabel={DRAW}>{DRAW}</Button>
+    {/if}
     <!-- Peek control: press-and-hold to reveal the own card; release/leave/cancel/blur re-hides it
          immediately (AC-2.5.1/.2). A real focusable <button> AFTER SWAP/KEEP (the hero stays the first
          two focus stops, AC-2.4.7). Keyboard/SR users activate it (the live region announces once). -->

@@ -10,6 +10,7 @@
   // no pulse keyframe — the contrast with Your Turn's pulsing frame is the whole point.
   import type { ProjectedTableState } from "@trash/shared";
   import LivesPips from "../components/LivesPips.svelte";
+  import { JUST_SWAPPED } from "../lib/copy";
 
   const { state }: { state: ProjectedTableState } = $props();
 
@@ -17,10 +18,19 @@
   const activeName = $derived(state.players.find((p) => p.id === state.currentTurnId)?.name ?? "");
   // The caller's OWN seat — for their Lives pips (find self via you.playerId).
   const self = $derived(state.players.find((p) => p.id === state.you.playerId));
+  // Value-free squirm signal (AC-2.4.3): a mid-pass swap advances the turn to the receiver, so they
+  // normally see this beat on Your Turn. But the FINAL swap of the pass completes it (phase → allActed,
+  // currentTurnId cleared), routing the receiver HERE instead — so Waiting must render it too, or the
+  // last-swap receiver silently loses the "someone swapped with you" moment. Carries NO card data (SM-6).
+  const justSwapped = $derived(state.justReceivedSwap === true);
 </script>
 
 <main class="surface">
   <h1 class="active">{activeName ? `${activeName}’s turn.` : "Hang tight."}</h1>
+
+  {#if justSwapped}
+    <p class="squirm" role="status" aria-live="polite">{JUST_SWAPPED}</p>
+  {/if}
 
   {#if self}
     <div class="lives" aria-label="Your lives">
@@ -49,6 +59,12 @@
     font-size: var(--type-headline-lg-size);
     font-weight: var(--type-headline-lg-weight);
     line-height: var(--type-headline-lg-line);
+    color: var(--color-on-surface);
+  }
+  .squirm {
+    margin: 0;
+    font-size: var(--type-body-lg-size);
+    font-weight: var(--type-body-lg-weight);
     color: var(--color-on-surface);
   }
   .lives {

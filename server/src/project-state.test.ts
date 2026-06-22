@@ -205,3 +205,53 @@ test("2.4: no swap transient (lastSwapReceiverId unset) → justReceivedSwap is 
   const projection = JSON.parse(JSON.stringify(projectStateFor(state, "A")));
   expect("justReceivedSwap" in projection).toBe(false);
 });
+
+// ---------------------------------------------------------------------------
+// Story 2.6 — you.isLastPlayer is the REAL derivation (was hardcoded false): TRUE only for the seat
+// whose right-hand neighbor is the starting player. VALUE-FREE (turn-order only — startingPlayerId +
+// seatIndex, never a card). The SM-6 tests above MUST still pass (this adds no card read).
+// ---------------------------------------------------------------------------
+
+test("2.6: you.isLastPlayer is TRUE for the last seat (C) and FALSE for the others (start=A, order A→B→C)", () => {
+  // tableWithHands sets startingPlayerId="A"; over alive {A,B,C} the Last Player is C
+  // (from C the next alive seat is A = start).
+  const state = tableWithHands({
+    A: { rank: 6, suit: "♠" },
+    B: { rank: 9, suit: "♥" },
+    C: { rank: 12, suit: "♦" },
+  });
+  expect(projectStateFor(state, "C").you.isLastPlayer).toBe(true);
+  expect(projectStateFor(state, "A").you.isLastPlayer).toBe(false);
+  expect(projectStateFor(state, "B").you.isLastPlayer).toBe(false);
+});
+
+test("2.6: heads-up (2 players) — the non-starter is the Last Player", () => {
+  const state = tableWithHands({ A: { rank: 6, suit: "♠" }, B: { rank: 9, suit: "♥" } });
+  // Trim to 2 seats (A start, B last).
+  state.players = state.players.filter((p) => p.id === "A" || p.id === "B");
+  expect(projectStateFor(state, "B").you.isLastPlayer).toBe(true);
+  expect(projectStateFor(state, "A").you.isLastPlayer).toBe(false);
+});
+
+test("2.6: you.isLastPlayer is FALSE when there is no round (lobby / between rounds)", () => {
+  const state = tableWithHands({ A: { rank: 6, suit: "♠" }, B: { rank: 9, suit: "♥" }, C: { rank: 12, suit: "♦" } });
+  state.round = null;
+  state.phase = "lobby";
+  expect(projectStateFor(state, "A").you.isLastPlayer).toBe(false);
+  expect(projectStateFor(state, "C").you.isLastPlayer).toBe(false);
+});
+
+test("2.6: deriving isLastPlayer leaks no card value (SM-6 re-pass for the new derivation)", () => {
+  const handA: Card = { rank: 6, suit: "♠" };
+  const handB: Card = { rank: 9, suit: "♥" };
+  const handC: Card = { rank: 12, suit: "♦" };
+  const state = tableWithHands({ A: handA, B: handB, C: handC });
+  const projection = JSON.parse(JSON.stringify(projectStateFor(state, "C")));
+  expect(projection.you.isLastPlayer).toBe(true); // C is the last player...
+  const values = new Set<unknown>();
+  collectValues(projection, values);
+  // ...and no other seat's card value appears anywhere (the derivation read only turn facts).
+  expect(values.has(handA.rank)).toBe(false);
+  expect(values.has(handB.rank)).toBe(false);
+  for (const entry of projection.players) expect("hand" in entry).toBe(false);
+});

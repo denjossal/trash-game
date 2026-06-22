@@ -8,6 +8,7 @@
 import { cleanup, render, screen, within } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
+import { JUST_SWAPPED } from "../lib/copy";
 
 import Waiting from "./Waiting.svelte";
 
@@ -57,5 +58,18 @@ describe("Waiting surface", () => {
   it("falls back to a warm neutral when the active player is not yet resolvable", () => {
     render(Waiting, { props: { state: state({ currentTurnId: "ghost" }) } });
     expect(screen.getByText(/hang tight\./i)).toBeTruthy();
+  });
+
+  // The FINAL swap of a pass completes it (phase → allActed, currentTurnId cleared), so the swap
+  // receiver routes HERE instead of Your Turn. Without rendering the beat on Waiting, the last-swap
+  // receiver silently loses the "someone swapped with you" moment (Story 2.6 regression of AC-2.4.3).
+  it("renders the squirm beat when the projection carries justReceivedSwap (the final-swap receiver)", () => {
+    render(Waiting, { props: { state: state({ phase: "allActed", currentTurnId: "", justReceivedSwap: true }) } });
+    expect(screen.getByText(JUST_SWAPPED)).toBeTruthy();
+  });
+
+  it("does NOT render the squirm beat when justReceivedSwap is absent (the normal waiting case)", () => {
+    render(Waiting, { props: { state: state() } });
+    expect(screen.queryByText(JUST_SWAPPED)).toBeNull();
   });
 });
