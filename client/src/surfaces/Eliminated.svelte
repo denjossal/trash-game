@@ -20,18 +20,30 @@
   // its implicit `main` landmark. This matches every sibling surface (YourTurn/Showdown/Waiting/
   // RoundResult all keep a bare `<main class="surface">` and announce from a child), and still keeps
   // ONE source: the announced text IS the visible warm copy, no hidden duplicate that could drift.
+  // ONE-MORE (Story 3.6, AC-3.6.4, AR-5): the router sends only the WINNER to the Winner surface at
+  // gameOver; every non-winner — INCLUDING a non-winning/eliminated Host — routes here. Because the Host
+  // conductor role is independent of isAlive/winning (architecture.md:335-336, "an eliminated Host keeps
+  // conducting"), a Host at gameOver gets the SAME "one more?" action the Winner surface offers, so the
+  // night can flow into another game even if the Host lost. Gated on `you.isHost && phase === "gameOver"`:
+  // a non-Host eliminated player, and the Host at a LIVE phase (mid-game elimination — no new game to start
+  // yet), see the calm spectator surface UNCHANGED (no action). sendNewGame is the GATE-1-exempt store seam
+  // (NEVER socket.send from a surface) — the only egress here, behind the Host+gameOver gate.
   import type { ProjectedTableState } from "@trash/shared";
-  import { ELIMINATED } from "../lib/copy";
-  // A pure props surface — a spectator emits no intents, so there is no store/socket import and no
-  // action button. The warm line is the same for any eliminated Player, so `state` is unused here.
+  import Button from "../components/Button.svelte";
+  import { ELIMINATED, ONE_MORE } from "../lib/copy";
+  import { sendNewGame } from "../lib/table-store.svelte";
+
   const { state }: { state: ProjectedTableState } = $props();
-  // svelte-ignore state_referenced_locally
-  void state;
 
   // Split the single source line into the lead/subline visual halves. `tail` falls back to "" so a
   // future copy edit that drops/changes the " — " separator degrades to a lead-only line rather than
   // rendering the literal "undefined" — the string in copy.ts stays the source of truth (UX-DR16).
   const [lead, tail = ""] = ELIMINATED.split(" — ");
+
+  // A non-winning Host at the terminal phase conducts "one more"; otherwise this stays a pure spectator
+  // surface (no action). Both conditions matter: phase gates out mid-game elimination, isHost gates out
+  // a regular eliminated spectator.
+  const canStartNewGame = $derived(state.you.isHost && state.phase === "gameOver");
 </script>
 
 <!-- `<main>` stays a bare landmark (matching every sibling surface). The warm-copy block is the live
@@ -42,6 +54,15 @@
     <h1>{lead}.</h1>
     <p>{tail}</p>
   </div>
+
+  {#if canStartNewGame}
+    <!-- A non-winning Host keeps conducting (AR-5): one tap starts a fresh game on the same Table. Inline
+         Host-only block mirroring the Winner/Showdown one-more pattern (the shared conductor-bar component
+         is Story 4.1). Absent for a non-Host spectator and at any live phase. -->
+    <div class="one-more" data-testid="newgame-host">
+      <Button onclick={() => sendNewGame(state.phaseToken)}>{ONE_MORE}</Button>
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -67,5 +88,8 @@
     font-weight: var(--type-body-lg-weight);
     color: var(--color-on-surface-variant);
     margin: 0;
+  }
+  .one-more {
+    margin-top: var(--space-stack-md);
   }
 </style>

@@ -20,6 +20,7 @@ import {
   buildDrawIntent,
   buildHostSetLivesIntent,
   buildKeepIntent,
+  buildNewGameIntent,
   buildSwapIntent,
   createRoomWithRetry,
   joinRoomAndListen,
@@ -147,6 +148,20 @@ export function sendDraw(turnToken: number): void {
 export function sendDealAgain(phaseToken: number): void {
   if (liveSocket === null) return;
   sendIntent(liveSocket, buildDealAgainIntent(phaseToken));
+}
+
+/**
+ * The Host starts ONE MORE game on the same Table (Story 3.6, FR-12/UX-DR12) — "one more?". Sends
+ * `newGame{phaseToken}` on the live socket via the GATE-1-exempt `sendIntent` (NEVER socket.send from a
+ * surface). The server validates Host authority + the phase token + the gameOver gate, resets the roster to
+ * full lives, returns to `lobby`, and fans out a fresh `lobby` tableState every device re-renders from; a
+ * stale/double-tap is rejected with `stale-phase` and swallowed silently (handleSocketMessage drops error
+ * envelopes — AC-2.2.3). The Winner surface (and a non-winning Host's Eliminated surface) passes the current
+ * `state.phaseToken`. Distinct from sendDealAgain (between-rounds re-deal). Fire-and-forget; no-op without a
+ * live socket (defensive — the one-more block only renders once a Table is live). */
+export function sendNewGame(phaseToken: number): void {
+  if (liveSocket === null) return;
+  sendIntent(liveSocket, buildNewGameIntent(phaseToken));
 }
 
 /** TEST-ONLY: reset the store + socket between cases. Not used by production code. */
