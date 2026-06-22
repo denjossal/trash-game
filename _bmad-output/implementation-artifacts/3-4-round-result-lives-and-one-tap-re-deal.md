@@ -4,7 +4,7 @@ baseline_commit: c39fb78
 
 # Story 3.4: Round Result, Lives & one-tap Re-deal
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
