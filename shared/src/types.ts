@@ -94,6 +94,19 @@ export type TableState = {
   players: Player[];
   round: Round | null;
   phaseToken: number;
+  /**
+   * BETWEEN-ROUND RESULT fields (Story 3.4) — set by the Showdown resolution inside handleReveal
+   * (resolve-at-reveal) and live while `phase` is `roundResult`/`gameOver`; cleared on the next
+   * `dealAgain`/`newGame`. `loserIds` is always set at resolution; `winnerIds` only on the terminal
+   * `gameOver` outcome. Persisted in the durable summary (so a DO reload at roundResult/gameOver still
+   * shows the pips + loser/winner) and projected omit-when-absent. `nextStartingPlayerId` carries the
+   * resolved Loser (the Story-3.1 tiebreak result) so `dealAgain` can seat the next Round's Starting
+   * Player; it is ALSO persisted (value-free seating data) so a reload at roundResult still re-deals the
+   * correct Loser rather than falling back to hostId. Optional/omit-when-absent.
+   */
+  loserIds?: string[];
+  winnerIds?: string[];
+  nextStartingPlayerId?: string;
 };
 
 // ---------------------------------------------------------------------------

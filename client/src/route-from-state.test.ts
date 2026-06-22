@@ -94,12 +94,31 @@ describe("routeFromState", () => {
     expect(routeFromState(makeState({ phase: "showdown", revealed: true }))).toBe("showdown");
   });
 
-  it("roundResult while alive -> roundResult", () => {
-    expect(routeFromState(makeState({ phase: "roundResult", you: { isAlive: true } }))).toBe("roundResult");
+  it("PRODUCED roundResult (resolve-at-reveal keeps the round -> revealed:true) -> showdown, NOT roundResult", () => {
+    // Story 3.4 resolve-at-reveal KEEPS the round, so a produced roundResult projection carries
+    // revealed===true and the revealed branch (line 53) wins over the roundResult branch (line 59). The
+    // loud beat (flip + loser highlight + Re-deal) lives on the Showdown surface. This is the NORMAL
+    // between-rounds projection — it never reaches the roundResult branch.
+    expect(routeFromState(makeState({ phase: "roundResult", revealed: true, you: { isAlive: true } }))).toBe(
+      "showdown",
+    );
+  });
+
+  it("COERCED-WAKE roundResult (round lost -> revealed:false) -> roundResult (the recovery surface)", () => {
+    // The ONLY way a roundResult projection reaches the roundResult branch: a D2.1-coerced wake (eviction
+    // mid-round → round=null → revealed:false → phase coerced to roundResult). RoundResult.svelte is the
+    // recovery surface and carries the Re-deal affordance so the game is not soft-locked after a reload.
+    expect(routeFromState(makeState({ phase: "roundResult", revealed: false, you: { isAlive: true } }))).toBe(
+      "roundResult",
+    );
   });
 
   it("roundResult while eliminated -> eliminated (spectator)", () => {
-    expect(routeFromState(makeState({ phase: "roundResult", you: { isAlive: false } }))).toBe("eliminated");
+    // revealed:false so the showdown branch doesn't pre-empt — an eliminated player at a coerced-wake
+    // roundResult is a sideline spectator.
+    expect(routeFromState(makeState({ phase: "roundResult", revealed: false, you: { isAlive: false } }))).toBe(
+      "eliminated",
+    );
   });
 
   it("eliminated player during a live turn phase -> eliminated (spectator, not waiting)", () => {

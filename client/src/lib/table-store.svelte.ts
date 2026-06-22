@@ -16,6 +16,7 @@
 import type { ProjectedTableState } from "@trash/shared";
 import type { PartySocket } from "partysocket";
 import {
+  buildDealAgainIntent,
   buildDrawIntent,
   buildHostSetLivesIntent,
   buildKeepIntent,
@@ -133,6 +134,19 @@ export function sendKeep(turnToken: number): void {
 export function sendDraw(turnToken: number): void {
   if (liveSocket === null) return;
   sendIntent(liveSocket, buildDrawIntent(turnToken));
+}
+
+/**
+ * The Host RE-DEALS between rounds (Story 3.4, FR-12) — the FIRST client phase-conducting send. Sends
+ * `dealAgain{phaseToken}` on the live socket via the GATE-1-exempt `sendIntent` (NEVER socket.send from a
+ * surface). The server validates Host authority + the phase token + the roundResult gate, deals the
+ * survivors with the Loser starting, and fans out a fresh `turns` tableState every device re-renders from;
+ * a stale/double-tap is rejected with `stale-phase` and swallowed silently (handleSocketMessage drops error
+ * envelopes — AC-2.2.3). The revealed-beat Re-deal block passes the current `state.phaseToken`. Fire-and-
+ * forget; no-op without a live socket (defensive — the Re-deal only renders once a Table is live). */
+export function sendDealAgain(phaseToken: number): void {
+  if (liveSocket === null) return;
+  sendIntent(liveSocket, buildDealAgainIntent(phaseToken));
 }
 
 /** TEST-ONLY: reset the store + socket between cases. Not used by production code. */

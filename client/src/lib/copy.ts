@@ -72,6 +72,16 @@ export const loser = (name: string): string => `Ooof — lowest card. That's a l
 /** All-tied case (Epic 3, Story 3.3). */
 export const TIE = "Tie for lowest — everybody drops a life!";
 
+/** Round-over heading on the between-rounds RoundResult recovery surface (Epic 3, Story 3.4). */
+export const ROUND_OVER = "Round over.";
+
+/** Host Re-deal action on the revealed beat (Epic 3, Story 3.4) — one tap starts the next Round; the
+ *  Loser of this round starts it (UX-DR10 / EXPERIENCE.md the previous-Loser-starts-next framing). */
+export const RE_DEAL = "Deal the next round";
+
+/** Non-Host waiting line on the revealed beat (Epic 3, Story 3.4) — others wait for the Host's Re-deal. */
+export const WAITING_TO_REDEAL = "Waiting on the host to deal again…";
+
 /** Eliminated (Epic 3, Story 3.5) — also the surface shown today (Eliminated.svelte stub). */
 export const ELIMINATED = "You're out — stick around and heckle.";
 

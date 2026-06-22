@@ -142,6 +142,23 @@ export function buildDrawIntent(turnToken: number): TurnIntent {
   return { type: "drawFromDeck", payload: { turnToken } };
 }
 
+// --- Story 3.4: dealAgain send builder (the FIRST client phase-CONDUCTING send) ---
+//
+// The Host's between-rounds Re-deal. dealAgain shares the {phaseToken} payload with deal/revealAll/newGame
+// (one grouped Intent member), so an Extract by the single literal "dealAgain" is `never` — extract the
+// grouped member and let the literal `type` narrow (the SAME caveat handleDeal/handleReveal document
+// server-side). The phaseToken comes from the current projection's `state.phaseToken`; the server's phase
+// guard rejects a stale/double-tapped copy with `stale-phase`, swallowed silently by the store. The
+// Showdown surface's Host-only Re-deal block mounts this via the table-store seam. [Source: shared/src/types.ts.]
+type PhaseIntent = Extract<Intent, { type: "deal" | "revealAll" | "dealAgain" | "newGame" }>;
+
+/** Build a `dealAgain` intent (frozen payload `{phaseToken}`, Story 3.4, FR-12). The Host re-deals the
+ *  surviving Players between rounds; the Loser of the resolved round starts. The revealed-beat Re-deal
+ *  block supplies the current `phaseToken` from the projection. */
+export function buildDealAgainIntent(phaseToken: number): PhaseIntent {
+  return { type: "dealAgain", payload: { phaseToken } };
+}
+
 /**
  * Send a built intent on an already-open, kept-alive socket (the lobby keeps its socket open after
  * create/join). Thin builder-level helper so the Host Lobby surface (Story 1.10) can post a hostSetLives

@@ -10,14 +10,22 @@
 //   - the coordinated flip is a discrete CSS hook (AC1) present on every card so the @media reduce-motion
 //     skip applies at runtime (jsdom does not evaluate @media — we assert the hook exists, mirroring how
 //     Button.svelte's reduce-motion is structured).
-import { cleanup, render, screen } from "@testing-library/svelte";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
-import { loser, TIE } from "../lib/copy";
+import { loser, RE_DEAL, TIE, WAITING_TO_REDEAL } from "../lib/copy";
 import { rankToLetter } from "../lib/card-display";
 import Showdown from "./Showdown.svelte";
 
-afterEach(cleanup);
+// The Re-deal block (Story 3.4) calls the store's sendDealAgain seam. Mock the store module so the test
+// asserts the surface posts the intent (the store→socket wiring is exercised by the table-store seam test).
+const sendDealAgain = vi.fn();
+vi.mock("../lib/table-store.svelte", () => ({ sendDealAgain: (token: number) => sendDealAgain(token) }));
+
+afterEach(() => {
+  cleanup();
+  sendDealAgain.mockClear();
+});
 
 function player(id: string, name: string, lives = 3, seatIndex = 0, isAlive = true) {
   return { id, name, lives, isAlive, isConnected: true, seatIndex };
@@ -140,5 +148,46 @@ describe("Showdown surface", () => {
     expect(screen.queryByText(rankToLetter(12))).toBeNull(); // Cleo's real Q is gone (no hand)
     expect(screen.queryByText(rankToLetter(1))).toBeNull(); // and no phantom "A" from the placeholder
     expect(container.querySelector('[aria-label="Card, face-down"]')).not.toBeNull();
+  });
+
+  // --- Story 3.4: the Host Re-deal affordance on the revealed beat (AC-3.4.3) ---
+
+  it("at roundResult the Host sees the Re-deal action; a tap posts dealAgain with the phaseToken", async () => {
+    render(Showdown, { props: { state: state({ phase: "roundResult", loserIds: ["p2"] }) } });
+    const button = screen.getByText(RE_DEAL);
+    expect(button).toBeTruthy();
+    // Non-Host waiting line is absent for the Host.
+    expect(screen.queryByText(WAITING_TO_REDEAL)).toBeNull();
+    await fireEvent.click(button);
+    expect(sendDealAgain).toHaveBeenCalledTimes(1);
+    expect(sendDealAgain).toHaveBeenCalledWith(3); // state.phaseToken
+  });
+
+  it("at roundResult a NON-Host sees the waiting line, not the Re-deal action", () => {
+    render(Showdown, {
+      props: {
+        state: state({
+          phase: "roundResult",
+          you: { playerId: "p2", isHost: false, isAlive: true, isConnected: true, isLastPlayer: false },
+          loserIds: ["p2"],
+        }),
+      },
+    });
+    expect(screen.getByText(WAITING_TO_REDEAL)).toBeTruthy();
+    expect(screen.queryByText(RE_DEAL)).toBeNull();
+  });
+
+  it("at gameOver NEITHER the Re-deal action nor the waiting line appears (terminal — routed elsewhere)", () => {
+    // A gameOver projection routes to winner/eliminated (route-from-state :48 over :53), but pin here that
+    // even if Showdown renders such a state, the Re-deal beat is absent (gated on phase === roundResult).
+    render(Showdown, { props: { state: state({ phase: "gameOver", winnerIds: ["me"], loserIds: ["p2"] }) } });
+    expect(screen.queryByText(RE_DEAL)).toBeNull();
+    expect(screen.queryByText(WAITING_TO_REDEAL)).toBeNull();
+  });
+
+  it("at a bare showdown (no resolution yet) the Re-deal beat is absent", () => {
+    render(Showdown, { props: { state: state() } }); // phase "showdown", no loserIds
+    expect(screen.queryByText(RE_DEAL)).toBeNull();
+    expect(screen.queryByText(WAITING_TO_REDEAL)).toBeNull();
   });
 });
