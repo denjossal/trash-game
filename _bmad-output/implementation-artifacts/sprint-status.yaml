@@ -1,3 +1,4 @@
+# last_updated: 2026-06-22 (sprint-planning refresh + Action-4 PRE-FLIGHT RESOLVED before 3.4: assert-vs-trust → ASSERT IN PRIMITIVE. dealRound [engine.ts:104-127] MUST gain two precondition asserts when reused by dealAgain (3.4): (a) throw if deck.length < aliveCount [closes engine.ts:115 silent-undefined], (b) throw if startingPlayerId not in alive hands [closes engine.ts:118-120 dead-seat turn pointer]; AND Story 3.4 derives a valid alive starter via the 3.1 tiebreak before calling = defense-in-depth, type never lies. Fold both asserts into 3.4 ACs at create-story time. Owner Charlie [epic-2-retro:74]. Epic 3 structure unchanged — all keys match epics.md, statuses current.)
 # last_updated: 2026-06-22 (epic-2-retrospective → done: retro saved epic-2-retro-2026-06-22.md — Epic 2 "Play a Round" fully closed; 3 action items (code-review-close-flips-status, Playwright e2e harness BEFORE Epic 3 [CRITICAL gate — discharges AC-2.3.4/2.4.5/2.5.2 manual + Epic-1 concurrency carry-forward], dealAgain engine-primitive pre-flight); no significant discoveries — Epic 3 plan stands)
 # last_updated: 2026-06-22 (retrospective prep: 2-4/2-5/2-6 review→done + epic-2 in-progress→done — all three carried "+ code review" commits w/ closed verdicts (2-4/2-5 merged via PR #13/#14, 2-6 on branch); tracking had lagged behind shipped reviews; Epic 2 "Play a Round" now fully closed)
 # generated: 2026-06-19
@@ -69,10 +70,17 @@
 #   They have no retrospective; they are enforced for the life of the project.
 # - Story 1.1 is a GATE-AND-STOP spike (go/no-go) — it must pass before Story 1.2 begins.
 # - Open product decision M1 (hostSetLives clamp-vs-top-up) due before Epic 4 / Story 4-2.
+# - Action-4 (engine-primitive assert-vs-trust) RESOLVED 2026-06-22 before Story 3.4:
+#   ASSERT IN PRIMITIVE. dealRound (engine.ts:104-127) must, when reused by dealAgain (3.4),
+#   (a) throw if deck.length < aliveCount, (b) throw if startingPlayerId is not an alive seat;
+#   AND 3.4 derives a valid alive starter via the 3.1 tiebreak before calling. Fold both
+#   asserts into the 3.4 ACs at create-story time. Owner: Charlie (epic-2-retro-2026-06-22.md:74).
 
 generated: 2026-06-19
-last_updated: 2026-06-22 (2-5 → review dev-story: CLIENT-ONLY peek — new pure card-display.ts (rankToLetter SOLE home + rankSpeech/cardSpeech), new display-only Card.svelte (face-down neon back ↔ Display-XL face; rank absent from a11y tree while hidden via {#if revealed}; reuse-bound for Epic 3), YourTurn.svelte peek placeholder → real press-and-hold + auto-hide (blur/visibilitychange/pagehide, $effect teardown) + owner-only SR announce-once; revealed is local $state, NO peek intent/no send/no server/no contract change; state prop renamed proj to dodge $state-rune collision; +18 client tests (76), server 112 unchanged; lint/typecheck/build green; AC-2.5.2 background/pagehide manual-confirmed, blur jsdom-tested)
-# refreshed by sprint-planning 2026-06-20
+last_updated: 2026-06-22 (3-1 → done code-review: 2 patches applied — resolveShowdown now ASSERTS its own preconditions (seated previousStartingPlayerId + non-empty hands; named Error, closes the bare-TypeError/Math.min(Infinity) gaps the 3.4 dealAgain caller would hit — assert-in-primitive extended past dealRound/nextAliveSeat) + AC-3.1.4 test breadth closed (two-way-tie/single-survivor/tiebreak-elim/E3-all-elim now PARAMETERIZED across 2..20 not fixed-size). 1 dismissed (co-winner lives===0 unreachable from valid state). server 164 / lint / typecheck green. PURE/GATE-2 held. Findings in story Review Findings section.)
+# prior: last_updated: 2026-06-22 (3-1 → review dev-story: pure resolveShowdown in engine.ts (+exported ShowdownResult discriminated union — terminal game carries no next-starter = AC-3.1.2 as a TYPE; returns NEW players array, inputs never mutated) implementing canonical D6 order (lowest-rank losers/suit-ignored/dupes-all-lose, -1 life, isAlive=false@0, win-check, step-6 tiebreak REUSING nextAliveSeat for the eliminated-loser skip); co-winner-safe 0-alive shared win (deferred-work:135 trap avoided at source); +14 engine tests incl. PARAMETERIZED 2..20 (single/all-tied/all-tied-to-zero) + E3 all-eliminated-tied-losers; Action-4 hardening FOLDED IN (dealRound asserts deck-coverage + alive-starter; nextAliveSeat asserts known seat — plain Error, purity boundary; 2.3/2.4/2.6 callers unregressed, lone-alive-seat guard green) per AC-3.1.7. PURE/GATE-2; ONLY engine.ts+engine.test.ts changed — NO types.ts/client/handler/dispatch/validate; SM-6 standing test 10/10 unchanged. server 158 / client 82 green; lint/typecheck/build clean. Branch story/3-1-showdown-resolution-engine. RED-first confirmed (17 fail→pass). 3.2 revealAll+reveal-true projection & 3.4 dealAgain+alive-starter-derivation+lives-UI stay downstream.)
+# prior: last_updated: 2026-06-22 (3-1 → ready-for-dev create-story: Epic 3 OPENED (epic-3 backlog→in-progress, first story). Pure resolveShowdown in engine.ts (canonical D6 order: lowest-rank losers incl. all-tied/dupes, -1 life/loser, isAlive=false@0, win-check 1→winner/0→shared/≥2→continue, step-6 tiebreak via nextAliveSeat REUSE) + parameterized 2..20 tests (single/two-way/all-tied/zero-survivor/single-survivor/elim-loser, E3 all-elim-tied-losers, fixtures SEED isAlive=false per Decision-#7 NO 3.4 forward-bind) + Action-4 hardening FOLDED IN HERE: dealRound asserts deck.length≥aliveCount [closes engine.ts:115] + alive/seated startingPlayerId [closes :118-120]; nextAliveSeat asserts known fromSeatIndex [closes :77,87] preserving lone-alive-returns-self + ≥2-alive callers. PURE/GATE-2, NO types.ts/client/handler/dispatch/validate change; 3.2 (revealAll+reveal-true projection) & 3.4 (dealAgain re-deal+alive-starter derivation+lives UI) stay downstream. Co-winner trap (deferred-work:135) flagged.)
+# refreshed by sprint-planning 2026-06-22
 project: trash-game
 project_key: NOKEY
 tracking_system: file-system
@@ -111,8 +119,8 @@ development_status:
   epic-2-retrospective: done
 
   # --- Epic 3: The Showdown ---
-  epic-3: backlog
-  3-1-showdown-resolution-engine-pure-parameterized-2-20: backlog
+  epic-3: in-progress
+  3-1-showdown-resolution-engine-pure-parameterized-2-20: review
   3-2-trigger-showdown-with-reveal-finality: backlog
   3-3-showdown-surface-the-safe-flip-and-loser-highlight: backlog
   3-4-round-result-lives-and-one-tap-re-deal: backlog

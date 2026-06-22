@@ -3,6 +3,20 @@
 // [Source: architecture.md#D5, lines 405–418, 686–691; eslint.config.js GATE 2]
 import type { Card, Player, Round } from "@trash/shared";
 
+/**
+ * The outcome of {@link resolveShowdown} (Story 3.1). PURE data — the caller (Story 3.4 handler) owns
+ * applying `players` to state, persisting, and projecting `loserIds`/`winnerIds`. The win-check verdict
+ * is a discriminated union so a terminal game (`winner`) carries NO next-starter (the tiebreak NEVER runs
+ * when the game ended — AC-3.1.2) and a continuing game carries exactly the next Starting Player.
+ */
+export type ShowdownResult = {
+  loserIds: string[]; // all players holding the lowest VALUE (incl. all-tied) — FR-10.
+  players: Player[]; // NEW array: lives deducted for losers, isAlive=false for any at 0. Inputs untouched.
+  outcome:
+    | { kind: "winner"; winnerIds: string[] } // 1 alive → sole winner; 0 alive → shared win (all co-winners). GAME OVER.
+    | { kind: "continue"; nextStartingPlayerId: string }; // ≥2 alive → re-deal; the step-6 tiebreak result.
+};
+
 /** The four card suits. Decorative only — `suit` is NEVER compared (rank is the value). */
 const SUITS: ReadonlyArray<Card["suit"]> = ["♠", "♥", "♦", "♣"];
 
@@ -75,6 +89,13 @@ export function nextAliveSeat(players: Player[], fromSeatIndex: number): string 
   // Order by seatIndex so the walk follows seating, not array position.
   const bySeat = players.slice().sort((a, b) => a.seatIndex - b.seatIndex);
   const startPos = bySeat.findIndex((p) => p.seatIndex === fromSeatIndex);
+  // Action-4 (assert-in-primitive, Story 3.1): an unknown `fromSeatIndex` must ASSERT, not silently
+  // walk from bySeat[0] and return an arbitrary "wrong-but-plausible" seat (the deferred-work #45 gap).
+  // Every real caller (2.4 rightHandNeighbor, 2.6 isLastPlayer, 3.1 tiebreak) passes a seated index, so
+  // this only bites a genuine bug. Plain Error — purity boundary; IntentError lives in validate.ts.
+  if (startPos === -1) {
+    throw new Error(`nextAliveSeat: unknown fromSeatIndex ${fromSeatIndex} (no matching seat)`);
+  }
   const n = bySeat.length;
   // Step forward (wrapping) from the seat AFTER `fromSeatIndex`, return the first alive one. Includes
   // the start seat last, so a lone alive seat returns itself.
@@ -108,6 +129,19 @@ export function dealRound(
   startingPlayerId: string,
 ): Round {
   const deck = shuffle(buildDeck(composition), rng);
+  // Action-4 (assert-in-primitive, Story 3.1) — the two preconditions that come due at 3.4's dealAgain
+  // (the first caller that can pass a possibly-eliminated previous host). The primitive guards itself so
+  // a buggy caller can never silently corrupt state; the 2.3 caller (assertDealable + alive lobby host)
+  // already honors both, so this is a no-op there. Plain Error — purity boundary (IntentError ∈ validate.ts).
+  const alive = players.filter((p) => p.isAlive);
+  // (a) Deck coverage: a Record<string,Card> would silently take `undefined` (deferred-work #46) without this.
+  if (deck.length < alive.length) {
+    throw new Error(`dealRound: deck (${deck.length}) cannot cover ${alive.length} alive players`);
+  }
+  // (b) Valid alive starter: currentTurnId would otherwise point at a dead/cardless seat (deferred-work #47).
+  if (!alive.some((p) => p.id === startingPlayerId)) {
+    throw new Error(`dealRound: startingPlayerId ${startingPlayerId} is not an alive, seated player`);
+  }
   const hands: Record<string, Card> = {};
   let next = 0;
   for (const p of players) {
@@ -239,4 +273,100 @@ export function applySwap(round: Round, callerPlayerId: string, players: Player[
   // accepted turn action supersedes any prior value: applySwap OVERWRITES it here with the new
   // receiver, applyKeep deletes it — so it never carries a stale receiver across turns.
   round.lastSwapReceiverId = neighbor;
+}
+
+/**
+ * The canonical Showdown resolution (Story 3.1) — the single pure function that computes a Round's
+ * outcome for ANY table size, so loser-finding / ties / deduction / elimination / win-check / tiebreak
+ * are tested once across 2..20 and Epic 5 never reopens it (Decision #7). Follows the D6 order exactly
+ * [architecture.md#D6 421–435]:
+ *   1. Reveal — the CALLER'S precondition (`round.revealed` already true via 3.2's revealAll); not flipped here.
+ *   2. Loser(s) = ALL players at the lowest `hands[id].rank`. Suit is NEVER read (rank IS the value — see SUITS).
+ *      Duplicate ranks (possible on the Epic-5 two-deck path) are exact value-ties — all such players lose (FR-10).
+ *   3. Deduct exactly one Life from each Loser (every tied Loser).
+ *   4. Mark `isAlive=false` for any player now at 0 Lives (FR-11).
+ *   5. Win-check: exactly 1 alive → that player wins; 0 alive (all tied to zero in one Showdown) → shared
+ *      win naming EVERY co-winner (FR-12 — never drop co-winners, cf. the Winner stub deferred-work #135);
+ *      ≥2 alive → continue.
+ *   6. ONLY when continuing: the next Starting Player = the tied Loser seated EARLIEST scanning right (via
+ *      {@link nextAliveSeat}) from the previous Starting Player's seat (the previous starter is eligible if
+ *      themselves a tied Loser); if that Loser was eliminated this Showdown, the next SURVIVING seat to their
+ *      right. The tiebreak NEVER runs on a terminal verdict (step 5 ended the game).
+ *
+ * PURE: returns a NEW `players` array (input `players`/`hands` are never mutated — the caller owns state
+ * mutation, persistence, and projection). No clock/RNG/IO; under the GATE-2 purity boundary. The tiebreak
+ * is pure `nextAliveSeat` math (architecture.md#D5 502 — turn-order/tiebreak live in the engine).
+ *
+ * @param players  the alive-snapshot roster (eliminated seats may be present; they hold no hand and never lose).
+ * @param hands    revealed hands, one Card per alive player (the round's `hands` at `revealed === true`).
+ * @param previousStartingPlayerId  the Round just resolved's `startingPlayerId` — the step-6 scan origin.
+ */
+export function resolveShowdown(
+  players: Player[],
+  hands: Record<string, Card>,
+  previousStartingPlayerId: string,
+): ShowdownResult {
+  // Action-4 (assert-in-primitive, Story 3.1) — resolveShowdown guards its own preconditions so the
+  // 3.4 dealAgain caller (which passes a possibly-eliminated previous host) can never silently corrupt
+  // state. Plain Error — purity boundary; IntentError lives in validate.ts. (a) The previous starter
+  // MUST be a seated player: otherwise seatOf→undefined → startPos=-1 → the step-6 scan reads bySeat[-1]
+  // (undefined) and throws a bare TypeError instead of a named one (mirrors the nextAliveSeat guard).
+  if (!players.some((p) => p.id === previousStartingPlayerId)) {
+    throw new Error(
+      `resolveShowdown: previousStartingPlayerId ${previousStartingPlayerId} is not a seated player`,
+    );
+  }
+
+  // Step 2 — Loser(s): the lowest rank among players who hold a revealed hand (alive seats). Suit ignored.
+  const contenders = players.filter((p) => hands[p.id] !== undefined);
+  // (b) At least one revealed hand: an empty `hands` → Math.min(...[])=Infinity → an empty loserSet and a
+  // meaningless no-op resolution. A Showdown with no revealed hand is a caller bug, not a valid outcome.
+  if (contenders.length === 0) {
+    throw new Error("resolveShowdown: no revealed hands (hands has no entry for any seated player)");
+  }
+  const lowest = Math.min(...contenders.map((p) => hands[p.id].rank));
+  const loserSet = new Set(contenders.filter((p) => hands[p.id].rank === lowest).map((p) => p.id));
+  const loserIds = [...loserSet];
+
+  // Steps 3 + 4 — deduct one Life per Loser and mark eliminations, into a NEW array (no input mutation).
+  const next: Player[] = players.map((p) => {
+    if (!loserSet.has(p.id)) return { ...p };
+    const lives = p.lives - 1;
+    return { ...p, lives, isAlive: lives > 0 };
+  });
+
+  // Step 5 — win-check on the post-deduction roster.
+  const aliveAfter = next.filter((p) => p.isAlive);
+  if (aliveAfter.length <= 1) {
+    // 1 alive → sole winner; 0 alive (all tied to zero) → shared win naming all who just dropped to zero.
+    const winnerIds =
+      aliveAfter.length === 1
+        ? [aliveAfter[0].id]
+        : next.filter((p) => loserSet.has(p.id) && p.lives === 0).map((p) => p.id);
+    return { loserIds, players: next, outcome: { kind: "winner", winnerIds } };
+  }
+
+  // Step 6 — ≥2 alive → continue. Next Starting Player = the tied Loser earliest scanning right from the
+  // previous starter's seat; if eliminated this Showdown, the next surviving seat to that Loser's right.
+  const seatOf = (id: string): number | undefined => players.find((p) => p.id === id)?.seatIndex;
+  const prevSeat = seatOf(previousStartingPlayerId);
+  // Order seats so we can scan right (wrapping) starting AT the previous starter's seat (inclusive — the
+  // previous starter is eligible if a tied Loser). bySeat mirrors nextAliveSeat's seating order.
+  const bySeat = players.slice().sort((a, b) => a.seatIndex - b.seatIndex);
+  const startPos = bySeat.findIndex((p) => p.seatIndex === prevSeat);
+  const m = bySeat.length;
+  let nextStartingPlayerId = aliveAfter[0].id; // defensive default (≥2 alive guarantees a real assignment below).
+  for (let step = 0; step < m; step++) {
+    const candidate = bySeat[(startPos + step) % m];
+    if (!loserSet.has(candidate.id)) continue; // we want the earliest tied LOSER from the previous starter.
+    const post = next.find((p) => p.id === candidate.id)!;
+    if (post.isAlive) {
+      nextStartingPlayerId = candidate.id; // surviving tied loser → they start.
+    } else {
+      // Eliminated tied loser → the next SURVIVING seat to their right (skips any further eliminated losers).
+      nextStartingPlayerId = nextAliveSeat(next, candidate.seatIndex);
+    }
+    break;
+  }
+  return { loserIds, players: next, outcome: { kind: "continue", nextStartingPlayerId } };
 }
