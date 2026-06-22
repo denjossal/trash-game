@@ -9,15 +9,17 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
-import { JUST_SWAPPED, KEEP, PEEK_HINT, SWAP, YOUR_TURN } from "../lib/copy";
+import { DRAW, JUST_SWAPPED, KEEP, PEEK_HINT, SWAP, YOUR_TURN } from "../lib/copy";
 import { DEBOUNCE_MS } from "../lib/interaction";
 import { cardSpeech } from "../lib/card-display";
 
 const sendSwap = vi.fn();
 const sendKeep = vi.fn();
+const sendDraw = vi.fn();
 vi.mock("../lib/table-store.svelte", () => ({
   sendSwap: (...a: unknown[]) => sendSwap(...a),
   sendKeep: (...a: unknown[]) => sendKeep(...a),
+  sendDraw: (...a: unknown[]) => sendDraw(...a),
 }));
 
 import YourTurn from "./YourTurn.svelte";
@@ -46,6 +48,7 @@ afterEach(cleanup);
 beforeEach(() => {
   sendSwap.mockReset();
   sendKeep.mockReset();
+  sendDraw.mockReset();
 });
 
 describe("YourTurn surface", () => {
@@ -211,5 +214,36 @@ describe("YourTurn — peek your own card (Story 2.5, AC-2.5.1/.2/.3/.4/.5)", ()
         props: { state: { ...base, you: { ...base.you, hand: undefined } } },
       }),
     ).not.toThrow();
+  });
+});
+
+describe("YourTurn — Last Player draw-from-deck (Story 2.6, AC-2.6.1)", () => {
+  it("does NOT render the Draw button when you.isLastPlayer is false (every other seat sees only Swap/Keep)", () => {
+    render(YourTurn, { props: { state: state({ you: { ...state().you, isLastPlayer: false } }) } });
+    expect(screen.queryByRole("button", { name: DRAW })).toBeNull();
+  });
+
+  it("renders the Draw button ONLY when you.isLastPlayer is true", () => {
+    render(YourTurn, { props: { state: state({ you: { ...state().you, isLastPlayer: true } }) } });
+    expect(screen.getByRole("button", { name: DRAW })).toBeTruthy();
+  });
+
+  it("the Draw button comes AFTER SWAP/KEEP (the standing focus-order contract holds — buttons[0]/[1])", () => {
+    render(YourTurn, { props: { state: state({ you: { ...state().you, isLastPlayer: true } }) } });
+    const buttons = screen.getAllByRole("button");
+    expect(buttons[0].getAttribute("aria-label")).toBe(SWAP);
+    expect(buttons[1].getAttribute("aria-label")).toBe(KEEP);
+    // Draw is present but is NOT one of the first two focus stops.
+    expect(buttons[0].getAttribute("aria-label")).not.toBe(DRAW);
+    expect(buttons[1].getAttribute("aria-label")).not.toBe(DRAW);
+    expect(buttons.some((b) => b.getAttribute("aria-label") === DRAW)).toBe(true);
+  });
+
+  it("tapping Draw sends a drawFromDeck with the current turn token (and nothing else)", async () => {
+    render(YourTurn, { props: { state: state({ turnToken: 4, you: { ...state().you, isLastPlayer: true } }) } });
+    await fireEvent.click(screen.getByRole("button", { name: DRAW }));
+    expect(sendDraw).toHaveBeenCalledWith(4);
+    expect(sendSwap).not.toHaveBeenCalled();
+    expect(sendKeep).not.toHaveBeenCalled();
   });
 });

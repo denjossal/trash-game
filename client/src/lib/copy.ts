@@ -57,6 +57,11 @@ export const KEEP = "KEEP";
 /** Peek hint (Epic 2, Story 2.5) — press-and-hold to peek your own card. */
 export const PEEK_HINT = "Press and hold to peek.";
 
+/** Draw-from-deck label (Epic 2, Story 2.6, FR-7, UX-DR5) — the Last Player's subordinate Secondary
+ *  third choice, shown ONLY on that one seat. Sentence case (not the shouty SWAP/KEEP primaries) to read
+ *  as visually subordinate to the two-button hero. */
+export const DRAW = "Draw from deck";
+
 /** Squirm signal (Epic 2, Story 2.4) — the value-free beat shown to a Player who just received a
  *  swapped Card. Warm + playful, never mean; carries NO card value (the squirm is the social moment). */
 export const JUST_SWAPPED = "Someone swapped with you!";

@@ -1,11 +1,11 @@
 // dispatch.ts — intent router + phase-legality; the single try/catch that turns an IntentError into a
 // targeted `error` event. [Source: architecture.md#Canonical-round-trip, #The-rules table — single-error-catch-site]
 //
-// SCOPE (Story 1.6 → 1.7 → 1.8 → 2.3 → 2.4): routes createRoom + joinRoom + hostSetLives + deal +
-// swap + keep (the first turn-scoped gameplay intents — Story 2.4). The remaining gameplay intents
-// (drawFromDeck/revealAll/dealAgain/newGame/hostRemovePlayer/hostReassign — Stories 2.6 / Epics 3–4)
-// are routed to an explicit not-yet-implemented rejection, NEVER silently accepted. The ONE try/catch
-// lives here; handlers throw IntentError and never send.
+// SCOPE (Story 1.6 → 1.7 → 1.8 → 2.3 → 2.4 → 2.6): routes createRoom + joinRoom + hostSetLives + deal +
+// swap + keep + drawFromDeck (all three turn-scoped gameplay intents — Stories 2.4/2.6). The remaining
+// gameplay intents (revealAll/dealAgain/newGame/hostRemovePlayer/hostReassign — Epics 3–4) are routed to
+// an explicit not-yet-implemented rejection, NEVER silently accepted. The ONE try/catch lives here;
+// handlers throw IntentError and never send.
 //
 // LOBBY VALIDATION (Decision #1, AC-1.6.3/1.7.5/1.8.3): lobby-phase intents (createRoom, joinRoom,
 // hostSetLives) are guarded by lightweight phase-checking + the Durable Object's single-threaded
@@ -25,6 +25,7 @@ import { IntentError } from "@trash/shared";
 import {
   handleCreateRoom,
   handleDeal,
+  handleDraw,
   handleHostSetLives,
   handleJoinRoom,
   handleKeep,
@@ -115,8 +116,20 @@ export async function dispatch(host: TableHost, connection: DispatchConnection, 
         fanOut(host.connections(), host.table!);
         return;
       }
+      case "drawFromDeck": {
+        // The Last Player draws a random Card from the Deck instead of swapping (Story 2.6, FR-7). Same
+        // turn-scoped chokepoint as swap/keep PLUS a last-player authority check; handleDraw is the ONE
+        // turn handler that PERSISTS (it completes the one pass → phase turns→allActed + phaseToken). On a
+        // stale token / non-last-seat / null-round it throws (stale-turn / not-your-turn / phase-illegal)
+        // BEFORE this line → the single try/catch emits a targeted `error`, NO fan-out. On success we fan
+        // out so EVERY device re-projects with the drawer's new own Card (SM-6 — own-card-only) and the
+        // `allActed` phase (the active seat is cleared, so everyone routes to Waiting until reveal, Epic 3).
+        await handleDraw(host, intent, connection.state?.playerId);
+        fanOut(host.connections(), host.table!);
+        return;
+      }
       // --- NOT yet implemented — explicit rejection, never a silent accept. ---
-      // drawFromDeck (Story 2.6) / revealAll/dealAgain/newGame/hostRemovePlayer/hostReassign (Epics 3–4).
+      // revealAll/dealAgain/newGame/hostRemovePlayer/hostReassign (Epics 3–4).
       default:
         throw new IntentError("phase-illegal");
     }

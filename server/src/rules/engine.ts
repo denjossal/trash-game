@@ -156,6 +156,65 @@ export function applyKeep(round: Round, callerPlayerId: string, players: Player[
 }
 
 /**
+ * DRAW from the Deck (Story 2.6, AC-2.6.2): the Last Player replaces their Card with a random Card from
+ * the remaining Deck instead of swapping. PURE mutator on `round`: take the TOP card of `round.deck`
+ * (the deck was already Fisher–Yates-shuffled by {@link dealRound} seeded by cryptoRng — so the top IS a
+ * uniformly-random card; the entropy was injected at the Deal, NOT here), make it the caller's new hand,
+ * and REMOVE it from the deck. The caller's OLD card is DISCARDED — dropped, NOT re-inserted (AC-2.6.2:
+ * "removed from the Deck for the rest of the Round; returns at the next Deal" when dealRound rebuilds the
+ * full deck). Then record the caller in `acted` and advance `currentTurnId` right (the Last Player keeps
+ * their newly-drawn card — the draw does not pass a card to anyone; the turn simply advances to the
+ * right-hand neighbor, which for the Last Player is the Starting Player, completing the one pass).
+ *
+ * NO rng / NO crypto here (the shuffle already happened — purity boundary, GATE 2). NO rank/suit read:
+ * the work is CONSTANT regardless of either card's value (deferred-work #54 (b) — timing-indistinguishable
+ * by card value; no value-dependent branch). The deck always has ≥1 card by construction (AC-2.6.4 — deck
+ * size ≥ player count: 52 ≥ 20 single-deck, 104 for 11–20), so no empty-deck path exists; no guard here.
+ */
+export function applyDraw(round: Round, callerPlayerId: string, players: Player[]): void {
+  delete round.lastSwapReceiverId; // a new turn action clears the prior swap's squirm transient.
+  // Top-of-deck draw: the shuffle is the randomness. shift() removes + returns the top card in place,
+  // matching this function's in-place mutation contract (like applySwap/applyKeep). The deck cover is
+  // guaranteed (AC-2.6.4), so `drawn` is always defined; the non-null assertion documents that invariant.
+  const drawn = round.deck.shift()!;
+  round.hands[callerPlayerId] = drawn; // the old card is discarded (dropped, not pushed back).
+  round.acted.push(callerPlayerId);
+  round.currentTurnId = rightHandNeighbor(callerPlayerId, players);
+}
+
+/**
+ * The `turns → allActed` transition predicate (Story 2.6, AC-2.6.3). TRUE when every `isAlive` Player has
+ * taken their Turn this one-pass (is in `round.acted`). Uses `isAlive` — the Deal-snapshot alive set, the
+ * SAME predicate {@link nextAliveSeat}/{@link dealRound} use — NEVER `isConnected` (a disconnected-but-alive
+ * Player still owes a Turn; the Host conducts around them, no auto-skip in MVP). Eliminated seats are not
+ * required to act (forward-compat for `dealAgain` 3.4 with eliminations). PURE: turn facts only, no card
+ * read. The handler uses this to decide when to enter the real `allActed` phase (architecture.md:574–590).
+ */
+export function allAlivePlayersActed(round: Round, players: Player[]): boolean {
+  const acted = new Set(round.acted);
+  return players.every((p) => !p.isAlive || acted.has(p.id));
+}
+
+/**
+ * Is `playerId` the single Last Player (Story 2.6, AC-2.6.1/.5)? TRUE for the one active alive seat whose
+ * right-hand neighbor (via {@link nextAliveSeat}) is the Round's `startingPlayerId` — i.e. the last seat
+ * before the one-pass wraps back to the start. Heads-up (2 Players): the non-starter is the Last Player.
+ * Skips eliminated seats (the last ALIVE seat before the starter). Exactly one alive seat is true.
+ *
+ * PURE + VALUE-FREE: reads `startingPlayerId` + `seatIndex` only, NEVER a card (SM-6). Shared by the
+ * server-authority check (handlers.handleDraw — only the Last Player may draw) and the projection
+ * (project-state — `you.isLastPlayer`), so the two cannot drift. An unknown/unseated `playerId` (no seat)
+ * yields the same neighbor walk as any seat and returns false unless it coincidentally maps — callers pass
+ * a real seated id (the projector iterates `state.players`; the handler passes the verified current-turn
+ * player). [Source: nextAliveSeat; epics.md#Story 2.6 heads-up AC-2.6.5.]
+ */
+export function isLastPlayer(round: Round, players: Player[], playerId: string): boolean {
+  const seat = players.find((p) => p.id === playerId);
+  if (seat === undefined || !seat.isAlive) return false; // not a seated alive player → never the last.
+  return nextAliveSeat(players, seat.seatIndex) === round.startingPlayerId;
+}
+
+/**
  * SWAP (Story 2.4, AC-2.4.3): the active Player EXCHANGES Cards with the Player to their right (each
  * then holds the other's former Card; everyone still holds exactly one). PURE mutator on `round`:
  * exchange `hands[caller]` ↔ `hands[neighbor]`, append the caller to `acted`, advance `currentTurnId`

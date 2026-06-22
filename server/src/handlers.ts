@@ -10,7 +10,7 @@ import type { Intent, Player, Round, TableState } from "@trash/shared";
 import { DEFAULT_LIVES, IntentError, MAX_LIVES, MAX_PLAYERS, MIN_LIVES, MIN_PLAYERS } from "@trash/shared";
 import { issueIdentity } from "./identity.js";
 import { loadSummary, persistSummary } from "./persistence.js";
-import { applyKeep, applySwap, dealRound } from "./rules/engine.js";
+import { allAlivePlayersActed, applyDraw, applyKeep, applySwap, dealRound, isLastPlayer } from "./rules/engine.js";
 import { assertDealable, bumpPhaseToken, bumpTurnToken, checkPhaseToken, checkTurnToken } from "./rules/validate.js";
 import { cryptoRng } from "./rng.js";
 
@@ -451,18 +451,61 @@ function requireActiveTurn(
 }
 
 /**
+ * Shared TURN-COMPLETION step for the three turn handlers (Story 2.6, AC-2.6.3). Called AFTER the action
+ * applies + the turn token bumps. If the one pass is now complete (every `isAlive` Player has acted), enter
+ * the REAL `allActed` phase: set `phase = "allActed"`, CLEAR the active seat, and bump the phase token.
+ * Returns `true` when it made that transition, so the caller knows the durable summary changed and MUST
+ * persist (a mid-pass action changes only memory-only `round`, so it returns false and the caller skips
+ * persist — the exact 2.4 swap/keep behavior).
+ *
+ * Why CLEAR `currentTurnId`: every turn action advances `currentTurnId` to the right-hand neighbor — for
+ * the LAST seat that is the Starting Player. If we left it pointing there while `phase === "allActed"`,
+ * the Starting Player's device would route to a phantom `yourTurn` (route-from-state checks `currentTurnId`
+ * for any live-round phase incl. `allActed`). Clearing it routes EVERY device to Waiting until the Host
+ * triggers the reveal (Epic 3 / Story 3.2). The empty string is projected as an absent/blank turn id.
+ *
+ * `allActed` is a REAL Phase the server ENTERS here on the final accepted turn intent (NOT a derived
+ * predicate) — Story 3.2's `revealAll` only READS it (guards `phase === "allActed"`), never sets it.
+ * The phase-token bump pairs the change with the monotonic guard (deferred-work #117 — kept adjacent).
+ * [Source: types.ts Phase 37–38; architecture.md 574–590; epics.md#Story 2.6 AC-2.6.3.]
+ */
+function maybeCompletePass(state: TableState, round: Round): boolean {
+  if (!allAlivePlayersActed(round, state.players)) return false;
+  state.phase = "allActed";
+  round.currentTurnId = ""; // no active seat once the pass is complete (router-leak fix).
+  bumpPhaseToken(state);
+  return true;
+}
+
+/**
+ * The shared accepted-turn TAIL for all three turn handlers: run {@link maybeCompletePass}, and — ONLY if
+ * it made the `turns → allActed` transition — persist the (now-changed) durable summary. Folding the
+ * persist INTO this step (rather than leaving a `if (maybeCompletePass(...)) await persistSummary(...)`
+ * couplet at each call site) keeps the "transition happened ⇒ must persist" coupling in one place, so a
+ * new turn handler cannot wire up the completion check while forgetting the durable write (deferred-work
+ * #117 — the bare-mutator-coupling class). Mid-pass it makes no transition and skips persist (the 2.4
+ * memory-only path: only `round` changed, phase stays `turns`).
+ */
+async function completePassAndPersistIfDone(host: TableHost, round: Round): Promise<void> {
+  if (maybeCompletePass(host.table!, round)) {
+    await persistSummary(host.storage, host.table!);
+  }
+}
+
+/**
  * handleSwap — the active Player EXCHANGES their Card with the Player to their right (Story 2.4, FR-6).
  * The SECOND gameplay handler and the FIRST consumer of the TURN scope (handleDeal was the first PHASE
  * consumer). Runs the shared turn-scoped pre-check (requireActiveTurn), then:
  *   mutate (applySwap — unconditional exchange + advance turn right + set the value-free squirm
  *   transient) → bumpTurnToken → [NO persist] → [dispatch] fanOut
  *
- * NO PERSIST (unlike handleDeal): a swap changes ONLY memory-only `round` fields (`hands`, `acted`,
- * `currentTurnId`, `turnToken`, `lastSwapReceiverId`); the durable summary (code/phase/hostId/
- * startingLives/players[]/phaseToken) is UNCHANGED (phase stays `turns`), so persisting would write an
- * identical blob. Swap is a memory-only mutation — same no-persist precedent as markDisconnected and
- * consistent with AC-2.2.5 (round is never persisted). [Source: architecture round-trip step 4
- * "persistSummaryIfPhaseChanged"; persistence.ts toSummary drops round.]
+ * PERSIST IS CONDITIONAL (Story 2.6): a MID-pass swap changes ONLY memory-only `round` fields (`hands`,
+ * `acted`, `currentTurnId`, `turnToken`, `lastSwapReceiverId`); the durable summary (code/phase/hostId/
+ * startingLives/players[]/phaseToken) is UNCHANGED (phase stays `turns`), so it does NOT persist — the
+ * 2.4 memory-only precedent (same as markDisconnected; consistent with AC-2.2.5). BUT when the LAST seat
+ * swaps, the one pass completes → `maybeCompletePass` enters `allActed` + bumps the phase token (both
+ * DURABLE), so the handler MUST persist. The conditional is centralized in `maybeCompletePass`'s return.
+ * [Source: architecture round-trip step 4 "persistSummaryIfPhaseChanged"; persistence.ts toSummary drops round.]
  *
  * SM-6 / FR-8 (AC-2.4.6): applySwap does CONSTANT work regardless of the cards' ranks (a plain field
  * exchange) — no value-dependent branch, so the response is timing-indistinguishable by card value
@@ -480,13 +523,17 @@ export async function handleSwap(
   // value-free squirm transient (round.lastSwapReceiverId) the projector turns into justReceivedSwap.
   applySwap(round, callerPlayerId as string, host.table!.players);
   bumpTurnToken(round); // accepted-path advance — next stale turn-scoped copy mismatches.
-  // No persistSummary: only memory-only round fields changed (phase unchanged). See JSDoc.
+  // If this was the LAST seat's action, the one pass is complete → enter `allActed` (Story 2.6) and
+  // persist (the durable phase + phaseToken changed). MID-pass: NO persist (the 2.4 memory-only path:
+  // only `round` changed, phase stays `turns`). [See completePassAndPersistIfDone / maybeCompletePass.]
+  await completePassAndPersistIfDone(host, round);
 }
 
 /**
  * handleKeep — the active Player RETAINS their Card and passes the Turn right (Story 2.4, FR-6). Same
  * accepted-path shape as handleSwap, but applyKeep leaves `hands` untouched (and clears any prior swap
- * squirm transient). NO PERSIST (memory-only round change; phase stays `turns`). [See handleSwap JSDoc.]
+ * squirm transient). PERSIST is conditional (Story 2.6): mid-pass → no persist; LAST-seat keep completes
+ * the pass → `allActed` + persist (via maybeCompletePass). [See handleSwap JSDoc.]
  */
 export async function handleKeep(
   host: TableHost,
@@ -496,7 +543,60 @@ export async function handleKeep(
   const round = requireActiveTurn(host, intent, callerPlayerId);
   applyKeep(round, callerPlayerId as string, host.table!.players);
   bumpTurnToken(round);
-  // No persistSummary: only memory-only round fields changed (phase unchanged). See handleSwap JSDoc.
+  // Last-seat action completes the pass → allActed + persist; mid-pass → no persist. See handleSwap JSDoc.
+  await completePassAndPersistIfDone(host, round);
+}
+
+/**
+ * handleDraw — the Last Player's THIRD choice: draw a random Card from the Deck instead of swapping
+ * (Story 2.6, FR-7). The third turn-scoped handler. Runs the shared turn pre-check (requireActiveTurn —
+ * shape → table-null → round-null/phase → not-your-turn → checkTurnToken), then a LAST-PLAYER authority
+ * check (only the Last Player may draw — server-authoritative, NFR-2), then:
+ *   applyDraw (top-of-deck → caller's hand; discard the old card; advance turn right) → bumpTurnToken →
+ *   maybeCompletePass (always true here — the Last Player is by definition the final seat → `allActed` +
+ *   clear active seat + bumpPhaseToken) → persistSummary.
+ *
+ * THE ONE TURN HANDLER THAT PERSISTS: a draw is the final action of the one pass (only the Last Player
+ * may draw — the authority check below guarantees it), so it ALWAYS completes the pass → `phase`
+ * (turns→allActed) and `phaseToken` change. Both are DURABLE summary fields (persistence.ts toSummary
+ * keeps phase + phaseToken; `round` is still dropped — memory-only). So handleDraw MUST persist (matching
+ * handleDeal's persist precedent), where a mid-pass swap/keep does NOT. The completion is therefore
+ * UNCONDITIONAL here (asserted, not guarded behind an `if` that can never be false) — the "did it
+ * transition" branch is the swap/keep concern, not the draw's.
+ *
+ * LAST-PLAYER CHECK: reuses the SHARED `isLastPlayer` derivation (rules/engine — value-free: turn-order
+ * only, never a card) so the server-authority gate and the projector's `you.isLastPlayer` cannot drift. A
+ * crafted `drawFromDeck` from a non-last seat (even on their real turn) is refused `not-your-turn` (the
+ * closest honest frozen reason — it is not their turn to DRAW; the contract is frozen, no new ErrorReason).
+ *
+ * SM-6 (b): applyDraw does CONSTANT work regardless of the drawn/discarded card's rank (no value branch) —
+ * timing-indistinguishable by card value (deferred-work #54 (b)). The own-card-only projection is dispatch's
+ * fanOut job, AFTER this returns. [Source: epics.md#Story 2.6; engine.applyDraw/isLastPlayer; handleDeal persist.]
+ */
+export async function handleDraw(
+  host: TableHost,
+  intent: Extract<Intent, { type: "swap" | "keep" | "drawFromDeck" }>,
+  callerPlayerId: string | undefined,
+): Promise<void> {
+  const round = requireActiveTurn(host, intent, callerPlayerId);
+  // --- LAST-PLAYER AUTHORITY (server-authoritative, NFR-2): only the Last Player may draw. The shared
+  // isLastPlayer derivation (value-free) keeps this gate in lockstep with the projector's you.isLastPlayer
+  // (the client only shows the Draw button on the last seat; the server refuses a crafted draw elsewhere). ---
+  if (!isLastPlayer(round, host.table!.players, callerPlayerId as string)) {
+    throw new IntentError("not-your-turn"); // not their turn to DRAW (frozen reason; no new ErrorReason).
+  }
+  // --- MUTATE: replace the caller's hand with the top deck card (the shuffle is the randomness — applyDraw
+  // takes no rng), discard the old card, advance the turn right (to the Starting Player). ---
+  applyDraw(round, callerPlayerId as string, host.table!.players);
+  bumpTurnToken(round); // accepted-path advance.
+  // --- COMPLETE THE PASS: the Last Player's draw is BY DEFINITION the final action → allActed + clear
+  // seat + bump phase token. This is unconditional (only the last seat reaches here — the authority check
+  // above), so we assert the transition rather than hide it behind an `if` that can never be false; persist
+  // because the durable phase + phaseToken changed (the ONE persisting turn handler). ---
+  const completed = maybeCompletePass(host.table!, round);
+  /* c8 ignore next */
+  if (!completed) throw new Error("invariant: a Last-Player draw must complete the pass");
+  await persistSummary(host.storage, host.table!);
 }
 
 /**

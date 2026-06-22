@@ -11,6 +11,7 @@
 // payload in a { type: "tableState", payload } envelope (Story 1.6). [Source: architecture.md
 // lines 104–108, 512–557; eslint.config.js GATE 1.]
 import type { Card, ProjectedTableState, Round, TableState } from "@trash/shared";
+import { isLastPlayer } from "./rules/engine.js";
 
 export function projectStateFor(state: TableState, playerId: string): ProjectedTableState {
   const round = state.round;
@@ -30,9 +31,13 @@ export function projectStateFor(state: TableState, playerId: string): ProjectedT
     isHost: state.hostId === playerId,
     isAlive: self?.isAlive ?? false,
     isConnected: self?.isConnected ?? false,
-    // MVP scope: no turn engine yet. The field MUST exist now per the contract, value-free.
-    // The real last-player derivation lands in Story 2.6. Do NOT invent turn-order logic here.
-    isLastPlayer: false,
+    // The REAL last-player derivation (Story 2.6, AC-2.6.1/.5): TRUE only for the single active alive
+    // seat whose right-hand neighbor is the round's startingPlayerId. VALUE-FREE — the shared
+    // `isLastPlayer` engine helper reads startingPlayerId + seatIndex only, NEVER a card (SM-6); the
+    // SAME helper gates the server-side draw authority (handlers.handleDraw) so the two cannot drift.
+    // FALSE when there is no round (lobby / between rounds) — only the Last Player's device shows the
+    // "Draw from deck" button. [Source: rules/engine.isLastPlayer; epics.md#Story 2.6.]
+    isLastPlayer: round ? isLastPlayer(round, state.players, playerId) : false,
   };
   // Own card: present only when a round exists. Omit the key when absent — never assign undefined,
   // so it is genuinely absent on the wire. [Source: architecture.md lines 547–548.]
@@ -101,19 +106,19 @@ const _beats = {
 } satisfies Pick<ProjectedTableState, "loserIds" | "winnerIds">;
 void _beats;
 
-// SSoT for the `Round` fields the body does NOT read. The projection consumes `round.revealed`,
-// `round.hands`, `round.currentTurnId`, `round.turnToken` structurally — but NOT `startingPlayerId`,
-// `acted`, or `deck`. Without this binding a rename of any of those three would PASS the server
-// typecheck in production code (the test fixture's full `Round` literal masks the hole, but the SSoT
-// guarantee must hold on the production half independent of any test). This exercises exactly those
-// three so a contract rename breaks the typecheck here. Type-only — never executed, never serialized.
-// Remove once a real producer (Epic 2/3 handlers) structurally consumes these fields.
-// [Review 2026-06-19: restores rename-detection lost when the 1.3 _round scaffolding was trimmed.]
+// SSoT for the `Round` fields the body does NOT read. The projection now consumes `round.revealed`,
+// `round.hands`, `round.currentTurnId`, `round.turnToken` AND `round.startingPlayerId` structurally
+// (Story 2.6 — the isLastPlayer derivation passes `round` into the engine helper, which reads
+// `startingPlayerId`), so that field no longer needs scaffolding — a rename would break the helper's
+// typecheck. The body still does NOT read `acted` or `deck` directly (the handlers do), so without this
+// binding a rename of either would PASS the server typecheck in production code (the test fixture's full
+// `Round` literal masks the hole, but the SSoT guarantee must hold on the production half independent of
+// any test). This exercises exactly those two. Type-only — never executed, never serialized.
+// Remove once a real producer (Epic 3 handlers) structurally consumes these fields.
 const _round = {
-  startingPlayerId: "",
   acted: [""],
   deck: [{ rank: 1, suit: "♠" }],
-} satisfies Pick<Round, "startingPlayerId" | "acted" | "deck">;
+} satisfies Pick<Round, "acted" | "deck">;
 void _round;
 
 // Card is consumed structurally by the projection (round.hands reads + you.hand/players[].hand

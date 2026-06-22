@@ -16,6 +16,7 @@
 import type { ProjectedTableState } from "@trash/shared";
 import type { PartySocket } from "partysocket";
 import {
+  buildDrawIntent,
   buildHostSetLivesIntent,
   buildKeepIntent,
   buildSwapIntent,
@@ -123,6 +124,15 @@ export function sendSwap(turnToken: number): void {
 export function sendKeep(turnToken: number): void {
   if (liveSocket === null) return;
   sendIntent(liveSocket, buildKeepIntent(turnToken));
+}
+
+/** The Last Player DRAWS from the Deck instead of swapping (Story 2.6, FR-7). Same fire-and-forget seam
+ *  as sendSwap/sendKeep; the server validates last-player authority + the turn token, replaces the card,
+ *  enters `allActed`, and fans out a fresh tableState. A stale/non-last draw is rejected and swallowed
+ *  silently (handleSocketMessage drops error envelopes — AC-2.2.3). No-op without a socket. */
+export function sendDraw(turnToken: number): void {
+  if (liveSocket === null) return;
+  sendIntent(liveSocket, buildDrawIntent(turnToken));
 }
 
 /** TEST-ONLY: reset the store + socket between cases. Not used by production code. */

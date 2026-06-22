@@ -13,7 +13,7 @@
 import { expect, test } from "vitest";
 import type { Card, Intent, Player, TableState } from "@trash/shared";
 import { IntentError } from "@trash/shared";
-import { handleKeep, handleSwap, type TableHost } from "./handlers.js";
+import { handleDraw, handleKeep, handleSwap, type TableHost } from "./handlers.js";
 
 // A TableHost stub: handlers only read `table` (and would call `storage`/`connections` if they
 // persisted/sent — swap/keep do neither). The stub throws if those are touched, proving no persist.
@@ -37,6 +37,31 @@ function hostWith(table: TableState | null): TableHost {
 
 function player(id: string, seatIndex: number, isAlive = true): Player {
   return { id, name: `name-${id}`, lives: 3, isAlive, isConnected: true, seatIndex };
+}
+
+/**
+ * A TableHost stub that ALLOWS persist (records each persisted summary's phase/phaseToken). handleDraw —
+ * and a LAST-seat swap/keep that completes the pass — change `phase` (turns→allActed) + `phaseToken`,
+ * which ARE durable, so they MUST persist (unlike a mid-pass swap/keep). This stub captures those writes.
+ */
+function hostWithStorage(table: TableState | null): TableHost & { persisted: { phase: string; phaseToken: number }[] } {
+  const persisted: { phase: string; phaseToken: number }[] = [];
+  return {
+    table,
+    name: table?.code ?? "WXYZ",
+    // persistence.persistSummary calls storage.put("table", summary). Capture the put; ignore the args
+    // (we record the live table's phase/phaseToken at persist time, which is what the summary carries).
+    storage: {
+      put: () => {
+        if (table) persisted.push({ phase: table.phase, phaseToken: table.phaseToken });
+        return Promise.resolve();
+      },
+    } as unknown as DurableObjectStorage,
+    connections() {
+      throw new Error("handlers must NOT access connections (transport is dispatch's job)");
+    },
+    persisted,
+  };
 }
 
 /** A table mid-round (`turns` phase) with a live round; A is the current-turn player. */
@@ -69,6 +94,22 @@ function swapIntent(turnToken: number): TurnIntent {
 function keepIntent(turnToken: number): TurnIntent {
   return { type: "keep", payload: { turnToken } };
 }
+function drawIntent(turnToken: number): TurnIntent {
+  return { type: "drawFromDeck", payload: { turnToken } };
+}
+
+/** A table where it is the LAST Player C's turn (A & B already acted); a deck is supplied for draws.
+ *  start = A, so C is the Last Player (from C the next alive seat is A = start). */
+function lastSeatTable(deck: Card[], turnToken = 0): TableState {
+  const t = turnsTable(
+    { A: { rank: 2, suit: "♠" }, B: { rank: 7, suit: "♥" }, C: { rank: 10, suit: "♦" } },
+    "C",
+    turnToken,
+  );
+  t.round!.acted = ["A", "B"]; // the first two seats have acted; C closes the pass.
+  t.round!.deck = deck;
+  return t;
+}
 
 // ---- happy paths ----------------------------------------------------------
 
@@ -86,7 +127,7 @@ test("handleSwap: exchanges the active player's & right-neighbor's hands, advanc
   expect(table.round!.currentTurnId).toBe("B");
   expect(table.round!.turnToken).toBe(1); // bumped by exactly 1
   expect(table.round!.lastSwapReceiverId).toBe("B"); // squirm transient set for the receiver
-  expect(table.phase).toBe("turns"); // phase unchanged (no allActed here — that's 2.6)
+  expect(table.phase).toBe("turns"); // MID-pass (A is not the last seat) → phase stays turns (2.6 regression contract)
 });
 
 test("handleKeep: leaves hands untouched, advances turn, bumps turn token (no squirm transient)", async () => {
@@ -166,4 +207,100 @@ test("handleSwap: wrong phase (lobby) is rejected with phase-illegal", async () 
 test("handleSwap: a null table is rejected with phase-illegal (defensive)", async () => {
   const host = hostWith(null);
   await expect(handleSwap(host, swapIntent(0), "A")).rejects.toBeInstanceOf(IntentError);
+});
+
+// ---- handleDraw (Story 2.6) -----------------------------------------------
+// The Last Player's third choice. Reuses requireActiveTurn (turn-token guard, #123 null-round guard,
+// not-your-turn) PLUS a last-player server-authority check. The ONLY turn handler that PERSISTS — it
+// changes phase (turns→allActed) + phaseToken, which are durable.
+
+test("handleDraw: the Last Player draws — hand replaced from deck, deck shrinks, turn token bumped", async () => {
+  const host = hostWithStorage(lastSeatTable([{ rank: 9, suit: "♦" }, { rank: 11, suit: "♣" }]));
+  const table = host.table!;
+  await handleDraw(host, drawIntent(0), "C");
+  expect(table.round!.hands.C).toEqual({ rank: 9, suit: "♦" }); // drew the top card (old 10♦ discarded)
+  expect(table.round!.deck).toEqual([{ rank: 11, suit: "♣" }]); // top removed
+  expect(table.round!.acted).toEqual(["A", "B", "C"]); // C closes the pass
+  expect(table.round!.turnToken).toBe(1); // bumped
+});
+
+test("handleDraw: the final action transitions the round to allActed, bumps phaseToken, and PERSISTS (AC-2.6.3)", async () => {
+  const host = hostWithStorage(lastSeatTable([{ rank: 9, suit: "♦" }]));
+  const table = host.table!;
+  const phaseTokenBefore = table.phaseToken;
+  await handleDraw(host, drawIntent(0), "C");
+  expect(table.phase).toBe("allActed"); // the one pass is complete
+  expect(table.phaseToken).toBe(phaseTokenBefore + 1); // phase changed → phase token bumped
+  // The active seat is CLEARED so no device routes to a phantom yourTurn (router-leak fix).
+  expect(table.round!.currentTurnId).toBe("");
+  // PERSISTED with the new phase + token (the durable summary changed — unlike a mid-pass swap/keep).
+  expect(host.persisted).toEqual([{ phase: "allActed", phaseToken: phaseTokenBefore + 1 }]);
+});
+
+test("handleDraw: a NON-last seat drawing is refused (server-authoritative — only the Last Player may draw)", async () => {
+  // It is A's turn (A is NOT the last player — C is). A crafted drawFromDeck from A must be refused.
+  const table = turnsTable({ A: { rank: 2, suit: "♠" }, B: { rank: 7, suit: "♥" }, C: { rank: 10, suit: "♦" } });
+  table.round!.deck = [{ rank: 9, suit: "♦" }];
+  const host = hostWithStorage(table);
+  await expect(handleDraw(host, drawIntent(0), "A")).rejects.toMatchObject({ reason: "not-your-turn" });
+  expect(table.round!.acted).toEqual([]); // no mutation
+  expect(host.persisted).toEqual([]); // no persist on rejection
+});
+
+test("handleDraw: a stale turn token is rejected with stale-turn (reuses the turn guard)", async () => {
+  const host = hostWithStorage(lastSeatTable([{ rank: 9, suit: "♦" }], 3));
+  await expect(handleDraw(host, drawIntent(2), "C")).rejects.toMatchObject({ reason: "stale-turn" });
+  expect(host.table!.round!.turnToken).toBe(3); // unchanged
+});
+
+test("handleDraw: a null round (post-D2.1-coercion) is rejected with phase-illegal BEFORE the token deref (#123)", async () => {
+  const table: TableState = {
+    code: "WXYZ",
+    phase: "turns",
+    hostId: "A",
+    startingLives: 3,
+    players: [player("A", 0), player("B", 1)],
+    round: null,
+    phaseToken: 2,
+  };
+  const host = hostWithStorage(table);
+  await expect(handleDraw(host, drawIntent(0), "A")).rejects.toMatchObject({ reason: "phase-illegal" });
+});
+
+// ---- the turns → allActed transition fires for the LAST seat's Swap/Keep too (AC-2.6.3) ----
+
+test("handleSwap by the LAST seat completes the pass → allActed + phaseToken bump + persist", async () => {
+  // C is the last player; A & B have acted. C swaps with its right-hand neighbor (A) and closes the pass.
+  const host = hostWithStorage(lastSeatTable([]));
+  const table = host.table!;
+  const phaseTokenBefore = table.phaseToken;
+  await handleSwap(host, swapIntent(0), "C");
+  expect(table.round!.acted).toEqual(["A", "B", "C"]);
+  expect(table.phase).toBe("allActed");
+  expect(table.phaseToken).toBe(phaseTokenBefore + 1);
+  expect(table.round!.currentTurnId).toBe(""); // active seat cleared (router-leak fix)
+  expect(host.persisted).toEqual([{ phase: "allActed", phaseToken: phaseTokenBefore + 1 }]);
+});
+
+test("handleKeep by the LAST seat completes the pass → allActed + phaseToken bump + persist", async () => {
+  const host = hostWithStorage(lastSeatTable([]));
+  const table = host.table!;
+  const phaseTokenBefore = table.phaseToken;
+  await handleKeep(host, keepIntent(0), "C");
+  expect(table.phase).toBe("allActed");
+  expect(table.phaseToken).toBe(phaseTokenBefore + 1);
+  expect(table.round!.currentTurnId).toBe("");
+  expect(host.persisted).toEqual([{ phase: "allActed", phaseToken: phaseTokenBefore + 1 }]);
+});
+
+test("handleSwap MID-pass (not the last seat) stays turns + does NOT persist (the 2.4 regression contract)", async () => {
+  // A is the first to act (B, C still owe a turn) → the pass is NOT complete; behavior is the 2.4 path.
+  const host = hostWithStorage(
+    turnsTable({ A: { rank: 2, suit: "♠" }, B: { rank: 7, suit: "♥" }, C: { rank: 10, suit: "♦" } }),
+  );
+  const table = host.table!;
+  await handleSwap(host, swapIntent(0), "A");
+  expect(table.phase).toBe("turns"); // unchanged mid-pass
+  expect(table.round!.currentTurnId).toBe("B"); // turn advances normally (NOT cleared)
+  expect(host.persisted).toEqual([]); // NO persist mid-pass (memory-only round change)
 });

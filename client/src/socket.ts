@@ -135,6 +135,13 @@ export function buildKeepIntent(turnToken: number): TurnIntent {
   return { type: "keep", payload: { turnToken } };
 }
 
+/** Build a `drawFromDeck` intent (frozen payload `{turnToken}`, Story 2.6, FR-7). The Last Player draws
+ *  a random Card from the Deck instead of swapping; the server validates last-player authority + the turn
+ *  token. The Your Turn surface supplies the current round's `turnToken` from the projection. */
+export function buildDrawIntent(turnToken: number): TurnIntent {
+  return { type: "drawFromDeck", payload: { turnToken } };
+}
+
 /**
  * Send a built intent on an already-open, kept-alive socket (the lobby keeps its socket open after
  * create/join). Thin builder-level helper so the Host Lobby surface (Story 1.10) can post a hostSetLives
