@@ -1,5 +1,34 @@
 # Deferred Work
 
+## Playwright e2e harness — Epic 2 retro action 3 (2026-06-22) + a REAL bug it caught
+
+> The Epic 2 retro (action 3) stood up a Chromium-only Playwright harness (`client/e2e/`, run via
+> `npm run test:e2e --workspace=client`) against a live `wrangler dev` + Vite — converting ALL THREE
+> manual-only Epic 2 ACs into re-runnable gates (7 tests, green): AC-2.5.2/2.5.1 (peek reveal + auto-hide
+> on visibilitychange/pagehide/blur — `peek-autohide.spec.ts`), AC-2.4.5 (Reluctant-Player unaided
+> peek→KEEP + debounce/stale-turn double-tap — `reluctant-turn.spec.ts`), AC-2.3.4 (fast-start
+> create→join→dealt under the activation window — `fast-start.spec.ts`).
+>
+> **CLIENT BUG FOUND + FIXED on the harness's first run (deferred-work #24/#50 made concrete):**
+> `client/src/socket.ts` `createSocket` omitted the `party` option, so partysocket defaulted to
+> `/parties/main/<code>` — but partyserver kebab-cases the `Table` binding and routes ONLY
+> `/parties/table/<code>`. Confirmed empirically: a WS upgrade to `/parties/main/` is REFUSED, `/parties/table/`
+> opens. So **every real browser connection was refused by the server** — a defect ALL 222 unit/DO tests
+> missed because they bypass HTTP routing (the `do` pool drives the DO directly; the `.mjs` harness used the
+> correct `/parties/table/` path; the client's own socket was only unit-tested with mocks). **FIX:** added
+> `party: "table"` to `createSocket`. This is exactly the integration gap the retro flagged manual ACs were
+> hiding — the harness paid for itself immediately.
+>
+> The Epic-1 multi-device activation gate stays covered browser-free by `multi-device-join.mjs`.
+>
+> Harness notes for the next author: the aux-host trick (a raw WS plays Host: createRoom→deal→keep) drives
+> the browser to a dealt YourTurn surface WITHOUT a Deal button (Story 4.1) and with ZERO production
+> test-seams. Two env gotchas are baked into `playwright.config.ts` comments: `wrangler dev` needs a
+> PORT readiness check (every GET 404s — WS-only); Vite binds `localhost` only (baseURL uses `localhost`,
+> not 127.0.0.1). The debounce double-tap fires two SYNCHRONOUS native clicks via `keep.evaluate(el => {
+> el.click(); el.click(); })` — two separate Playwright clicks can't reproduce it (the first commit
+> transitions the surface + detaches the button before the second resolves).
+
 ## Story 2.6 (Last-Player draw) — Epic 2 now FEATURE-COMPLETE (2026-06-22)
 
 > Story 2.6 landed the third turn intent (`drawFromDeck`) + the `turns → allActed` handoff to Epic 3. Resolutions:
