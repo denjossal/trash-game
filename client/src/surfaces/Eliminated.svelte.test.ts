@@ -5,13 +5,22 @@
 // eliminated Player is a SIDELINE SPECTATOR — warm copy, NO actions (a spectator never routes to
 // yourTurn, so there are no Swap/Keep/Re-deal buttons), and a non-punishing SR announcement that
 // matches the warm copy verbatim (review-accessibility.md:93-94). It is NEVER a dead-end.
-import { cleanup, render, screen } from "@testing-library/svelte";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
-import { ELIMINATED } from "../lib/copy";
+import { ELIMINATED, ONE_MORE } from "../lib/copy";
 import Eliminated from "./Eliminated.svelte";
 
-afterEach(cleanup);
+// A non-winning HOST reaches Eliminated at gameOver (router sends only the winner to Winner; everyone else
+// — incl. a non-winning Host — routes here). AR-5: the Host keeps conducting, so the one-more action lives
+// here too. Mock the store seam so the test asserts the surface posts newGame.
+const sendNewGame = vi.fn();
+vi.mock("../lib/table-store.svelte", () => ({ sendNewGame: (token: number) => sendNewGame(token) }));
+
+afterEach(() => {
+  cleanup();
+  sendNewGame.mockClear();
+});
 
 // An eliminated projection: this device's seat is out (isAlive:false), the field plays on. The warm
 // copy is state-independent, so the exact phase/winner does not change what Eliminated renders — but a
@@ -74,6 +83,45 @@ describe("Eliminated spectator surface", () => {
       props: { state: state({ phase: "turns", winnerIds: undefined, currentTurnId: "p2" }) },
     });
     expect(screen.getByText(/stick around and heckle/i)).toBeTruthy();
+    expect(container.querySelectorAll("button").length).toBe(0);
+  });
+
+  // --- Story 3.6: a non-winning HOST reaches Eliminated at gameOver but must still conduct "one more" (AR-5) ---
+
+  it("a HOST at gameOver sees the 'one more' action; a tap posts newGame with the phaseToken", async () => {
+    // The Host lost (eliminated, not in winnerIds) → routes here, but keeps conducting. The warm spectator
+    // copy still shows, PLUS the one-more action so the night can flow into another game.
+    render(Eliminated, {
+      props: {
+        state: state({
+          hostId: "me",
+          you: { playerId: "me", isHost: true, isAlive: false, isConnected: true, isLastPlayer: false },
+        }),
+      },
+    });
+    expect(screen.getByText(/stick around and heckle/i)).toBeTruthy(); // still the warm sideline copy
+    const button = screen.getByText(ONE_MORE);
+    expect(button).toBeTruthy();
+    await fireEvent.click(button);
+    expect(sendNewGame).toHaveBeenCalledTimes(1);
+    expect(sendNewGame).toHaveBeenCalledWith(6); // state.phaseToken
+  });
+
+  it("the one-more action is absent for a Host at a LIVE phase (only the gameOver terminal offers it)", () => {
+    // A Host can be eliminated mid-game and route here at a live phase — there is no new game to start yet,
+    // so no one-more action (gated on phase==="gameOver").
+    const { container } = render(Eliminated, {
+      props: {
+        state: state({
+          phase: "turns",
+          winnerIds: undefined,
+          currentTurnId: "p2",
+          hostId: "me",
+          you: { playerId: "me", isHost: true, isAlive: false, isConnected: true, isLastPlayer: false },
+        }),
+      },
+    });
+    expect(screen.queryByText(ONE_MORE)).toBeNull();
     expect(container.querySelectorAll("button").length).toBe(0);
   });
 });

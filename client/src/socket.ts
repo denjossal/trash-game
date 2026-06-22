@@ -159,6 +159,16 @@ export function buildDealAgainIntent(phaseToken: number): PhaseIntent {
   return { type: "dealAgain", payload: { phaseToken } };
 }
 
+/** Build a `newGame` intent (frozen payload `{phaseToken}`, Story 3.6, FR-12, UX-DR12). The Host's
+ *  "one more?" — a NEW game on the same Table (gameOver→lobby, same roster, full lives). Shares the grouped
+ *  {phaseToken} Intent member with deal/revealAll/dealAgain (same Extract caveat as buildDealAgainIntent).
+ *  The Winner surface's (and the non-winning Host's Eliminated surface's) one-more block mounts this via the
+ *  table-store seam. Distinct from dealAgain (between-rounds re-deal); the server's `gameOver` phase gate
+ *  rejects a stale/double-tapped copy with `stale-phase`, swallowed silently by the store. */
+export function buildNewGameIntent(phaseToken: number): PhaseIntent {
+  return { type: "newGame", payload: { phaseToken } };
+}
+
 /**
  * Send a built intent on an already-open, kept-alive socket (the lobby keeps its socket open after
  * create/join). Thin builder-level helper so the Host Lobby surface (Story 1.10) can post a hostSetLives

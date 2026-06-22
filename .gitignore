@@ -17,6 +17,10 @@ client/dev-dist/
 .wrangler/
 .dev.vars
 
+# Vite local env (developer-specific; e.g. VITE_WS_URL for local wrangler dev)
+.env.local
+.env.*.local
+
 # TS build info
 *.tsbuildinfo
 

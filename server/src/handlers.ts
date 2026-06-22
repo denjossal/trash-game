@@ -545,6 +545,72 @@ export async function handleDealAgain(
 }
 
 /**
+ * handleNewGame — "one more?" (Story 3.6, FR-12, UX-DR12). The Host taps the Winner surface's (or, as a
+ * non-winning Host, the Eliminated surface's) one-more action at `gameOver`; the server starts a NEW game on
+ * the SAME Table: it re-applies `startingLives` to every Player, brings every seat back alive, returns the
+ * phase to `lobby` (re-opening join for late arrivals), clears the terminal result, drops the revealed
+ * round, and persists. CLONES the handleDeal/handleDealAgain accepted-path chokepoint exactly, differing
+ * only in the phase gate and the roster reset:
+ *   shape → table-null → not-host → checkPhaseToken → phase(=="gameOver") → reset roster → clear result →
+ *   phase=lobby + round=null → bumpPhaseToken → persist
+ *
+ * DISTINCT FROM dealAgain (Winston phase-machine reconciliation): `dealAgain` is the between-rounds re-deal
+ * within an ONGOING game (`roundResult → turns`, survivors only); `newGame` is a fresh game on the same
+ * Table (`gameOver → lobby`, EVERY seat alive at full lives). The two are mutually exclusive on the phase
+ * gate — `dealAgain` is accepted ONLY at `roundResult`, `newGame` ONLY at `gameOver` — so neither can fire
+ * in the other's phase. NO new ErrorReason (the union is frozen).
+ *
+ * SAME ROSTER, NO RE-JOIN (AC-3.6.3): the seats keep their `id`/`name`/`seatIndex`/`isConnected` — existing
+ * Players are not dropped and do not re-join; they simply receive a fresh `lobby` projection. Returning to
+ * `lobby` re-opens join (handleJoinRoom admits ONLY at `lobby`), so late arrivals can seat up to the next
+ * first Deal. `startingLives` is the Host's current setting (Story 1.8 / hostSetLives), re-applied here the
+ * same way handleHostSetLives syncs every player's lives.
+ *
+ * `callerPlayerId` is the connection's stamp (dispatch passes `connection.state?.playerId`) — an unstamped
+ * socket → undefined → `!== hostId` → `not-host`. [Source: epics.md#Story 3.6; architecture.md#Phase
+ * gameOver→newGame→lobby 589; handleDealAgain precedent.]
+ */
+export async function handleNewGame(
+  host: TableHost,
+  // Same grouped-member Extract as handleDeal/handleReveal/handleDealAgain (deal/revealAll/dealAgain/newGame
+  // share the {phaseToken} payload). dispatch's `case "newGame"` guarantees the variant here.
+  intent: Extract<Intent, { type: "deal" | "revealAll" | "dealAgain" | "newGame" }>,
+  callerPlayerId: string | undefined,
+): Promise<void> {
+  // --- ACCEPTED-PATH PRE-CHECK (AC-3.6.2): shape → table-null → not-host → checkPhaseToken → phase
+  // (=== "gameOver"). The `gameOver` gate makes newGame the terminal-only mirror of dealAgain's
+  // roundResult-only gate: a newGame at any non-terminal phase → `phase-illegal`. The double-tap ordering
+  // (token before phase gate) lives in the shared helper. ---
+  requirePhaseConductor(host, intent, callerPlayerId, "gameOver");
+  const table = host.table!; // requirePhaseConductor proved it non-null.
+
+  // --- MUTATE: start a fresh game on the SAME roster. Re-apply the Host's startingLives to every seat and
+  // bring everyone back alive (mirrors handleHostSetLives's lives-sync). id/name/seatIndex/isConnected are
+  // preserved — the Players are not dropped and never re-join (AC-3.6.3). ---
+  for (const p of table.players) {
+    p.lives = table.startingLives;
+    p.isAlive = true;
+  }
+  // Return to lobby (re-opens join — handleJoinRoom admits ONLY at lobby), and clear the terminal result +
+  // the revealed round exactly as handleDealAgain clears a between-round result. The round is cleared only
+  // at the next dealAgain/newGame (handleReveal kept it for the gameOver beat); now is that moment.
+  table.phase = "lobby";
+  table.loserIds = undefined;
+  table.winnerIds = undefined;
+  table.nextStartingPlayerId = undefined;
+  table.round = null;
+
+  // --- BUMP (accepted path): advance the phase token so the next stale newGame copy mismatches. Kept
+  // adjacent to the checkPhaseToken above so guard+advance reads as one unit (deferred-work #117). ---
+  bumpPhaseToken(table);
+
+  // --- PERSIST: the durable summary now carries phase:"lobby" + every player reset to startingLives/alive +
+  // the cleared result + the bumped token; `round` is dropped by toSummary (already null). The per-device
+  // fan-out is dispatch's job. ---
+  await persistSummary(host.storage, table);
+}
+
+/**
  * Shared accepted-path PRE-CHECK for the turn-scoped gameplay handlers (Story 2.4 swap/keep; reused by
  * 2.6 drawFromDeck). Runs the EXACT order handleDeal set as the precedent, adapted to the TURN scope,
  * and returns the validated `round` so the caller can mutate it:

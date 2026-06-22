@@ -85,8 +85,17 @@ export const WAITING_TO_REDEAL = "Waiting on the host to deal again…";
 /** Eliminated (Epic 3, Story 3.5) — also the surface shown today (Eliminated.svelte stub). */
 export const ELIMINATED = "You're out — stick around and heckle.";
 
-/** Winner (Epic 3, Story 3.6). `name` is the winning Player's name. */
+/** Winner (Epic 3, Story 3.6). `name` is the winning Player's name (co-winners on a shared win are joined
+ *  into the one name slot — single-source voice, no separate plural string). */
 export const winner = (name: string): string => `${name} wins it. One more?`;
+
+/** Host's "one more?" action label on the Winner / Eliminated end-of-game surfaces (Story 3.6). The warm
+ *  celebration sentence already carries the "One more?" question; this is the short button verb. */
+export const ONE_MORE = "One more";
+
+/** Non-Host waiting line on the Winner surface (Story 3.6) — the new-game analog of WAITING_TO_REDEAL. The
+ *  re-deal wording ("deal again") is wrong for a NEW game on the same Table, so this is its own line. */
+export const WAITING_TO_NEW_GAME = "Waiting on the host to start one more…";
 
 /** Bad / expired Room Code (Story 1.10 Home). */
 export const BAD_CODE = "No table with that code — check the letters?";
