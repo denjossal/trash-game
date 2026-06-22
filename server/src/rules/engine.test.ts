@@ -9,6 +9,7 @@ import {
   dealRound,
   isLastPlayer,
   nextAliveSeat,
+  resolveShowdown,
   shuffle,
 } from "./engine.js";
 
@@ -459,4 +460,291 @@ test("isLastPlayer: exactly one alive seat is the Last Player", () => {
   expect(flags.filter(Boolean).length).toBe(1);
   // Start = B → order B→C→D→A→(B). Last Player is A (from A the next alive is B = start).
   expect(isLastPlayer(round, players, "A")).toBe(true);
+});
+
+// ---- resolveShowdown (Story 3.1, AC-3.1.1..3.1.6) -------------------------
+// The pure canonical Showdown resolution (architecture.md#D6 421–435): lowest-rank loser(s)
+// (suit ignored; ties all lose), -1 life/loser, isAlive=false at 0, win-check, then ONLY when
+// ≥2 alive remain, the step-6 next-starting-player tiebreak via nextAliveSeat. PURE: returns a
+// NEW players array, never mutates inputs.
+
+/** Seat with explicit lives (the resolution math needs precise life counts, not the 3/0 default). */
+function seatL(id: string, seatIndex: number, lives: number, isAlive = lives > 0): Player {
+  return { id, name: `name-${id}`, lives, isAlive, isConnected: true, seatIndex };
+}
+
+/** Build a hands record from {id: rank} (suit is irrelevant to resolution — pinned by the suit-ignored test). */
+function handsOf(byRank: Record<string, number>): Record<string, Card> {
+  const h: Record<string, Card> = {};
+  for (const [id, rank] of Object.entries(byRank)) h[id] = { rank, suit: "♠" };
+  return h;
+}
+
+test("resolveShowdown: PURE — does not mutate the input players (lives/isAlive unchanged on the argument)", () => {
+  const players = [seatL("A", 0, 3), seatL("B", 1, 3), seatL("C", 2, 3)];
+  const snapshot = players.map((p) => ({ ...p }));
+  resolveShowdown(players, handsOf({ A: 1, B: 5, C: 9 }), "A");
+  expect(players).toEqual(snapshot); // inputs untouched — caller owns mutation/persistence.
+});
+
+test("resolveShowdown: single lowest loser — deducts one life from that player only, others untouched", () => {
+  const players = [seatL("A", 0, 3), seatL("B", 1, 3), seatL("C", 2, 3)];
+  const r = resolveShowdown(players, handsOf({ A: 1, B: 5, C: 9 }), "A");
+  expect(r.loserIds).toEqual(["A"]);
+  const byId = Object.fromEntries(r.players.map((p) => [p.id, p]));
+  expect(byId.A.lives).toBe(2);
+  expect(byId.B.lives).toBe(3);
+  expect(byId.C.lives).toBe(3);
+  expect(r.outcome).toEqual({ kind: "continue", nextStartingPlayerId: "A" }); // ≥2 alive → A (the lone loser) starts.
+});
+
+test("resolveShowdown: suit is IGNORED — lowest is by rank only", () => {
+  // Same lowest rank (1) for A regardless of suit; suit must never break the tie or change the loser.
+  const players = [seatL("A", 0, 3), seatL("B", 1, 3)];
+  const r = resolveShowdown(
+    players,
+    { A: { rank: 1, suit: "♣" }, B: { rank: 1, suit: "♠" } },
+    "A",
+  );
+  // Equal ranks → BOTH lose (exact value-tie), suit does not arbitrate.
+  expect(r.loserIds.sort()).toEqual(["A", "B"]);
+});
+
+test("resolveShowdown: two-way tie — every tied lowest player loses a life", () => {
+  const players = [seatL("A", 0, 3), seatL("B", 1, 3), seatL("C", 2, 3)];
+  const r = resolveShowdown(players, handsOf({ A: 2, B: 2, C: 7 }), "A");
+  expect(r.loserIds.sort()).toEqual(["A", "B"]);
+  const byId = Object.fromEntries(r.players.map((p) => [p.id, p]));
+  expect(byId.A.lives).toBe(2);
+  expect(byId.B.lives).toBe(2);
+  expect(byId.C.lives).toBe(3);
+});
+
+test("resolveShowdown: all-tied — every player same rank, all lose a life, all continue (≥2 alive)", () => {
+  const players = [seatL("A", 0, 3), seatL("B", 1, 3), seatL("C", 2, 3)];
+  const r = resolveShowdown(players, handsOf({ A: 6, B: 6, C: 6 }), "A");
+  expect(r.loserIds.sort()).toEqual(["A", "B", "C"]);
+  for (const p of r.players) expect(p.lives).toBe(2);
+  expect(r.outcome.kind).toBe("continue");
+});
+
+test("resolveShowdown: single-survivor win — the last player with lives wins (game over), no tiebreak", () => {
+  // A and B at 1 life tie for lowest → both drop to 0 → eliminated; C survives → C wins.
+  const players = [seatL("A", 0, 1), seatL("B", 1, 1), seatL("C", 2, 3)];
+  const r = resolveShowdown(players, handsOf({ A: 2, B: 2, C: 9 }), "A");
+  expect(r.loserIds.sort()).toEqual(["A", "B"]);
+  const byId = Object.fromEntries(r.players.map((p) => [p.id, p]));
+  expect(byId.A.isAlive).toBe(false);
+  expect(byId.B.isAlive).toBe(false);
+  expect(byId.C.isAlive).toBe(true);
+  expect(r.outcome).toEqual({ kind: "winner", winnerIds: ["C"] });
+});
+
+test("resolveShowdown: zero-survivors shared win — all tied to zero in one showdown → all co-winners (game over)", () => {
+  // Everyone at 1 life, all tied lowest → all drop to 0 → 0 alive → shared win names ALL.
+  const players = [seatL("A", 0, 1), seatL("B", 1, 1), seatL("C", 2, 1)];
+  const r = resolveShowdown(players, handsOf({ A: 4, B: 4, C: 4 }), "A");
+  expect(r.loserIds.sort()).toEqual(["A", "B", "C"]);
+  expect(r.outcome.kind).toBe("winner");
+  if (r.outcome.kind === "winner") expect(r.outcome.winnerIds.sort()).toEqual(["A", "B", "C"]); // co-winners, none dropped.
+});
+
+test("resolveShowdown: tiebreak — multi-loser, next starter is the tied loser earliest from the previous starter's seat", () => {
+  // Prev starter = A (seat 0). B (seat 1) and D (seat 3) tie for lowest, both survive. Scanning right
+  // from A: seat 1 (B) is the first tied loser → B starts the next round.
+  const players = [seatL("A", 0, 3), seatL("B", 1, 3), seatL("C", 2, 3), seatL("D", 3, 3)];
+  const r = resolveShowdown(players, handsOf({ A: 9, B: 2, C: 7, D: 2 }), "A");
+  expect(r.loserIds.sort()).toEqual(["B", "D"]);
+  expect(r.outcome).toEqual({ kind: "continue", nextStartingPlayerId: "B" });
+});
+
+test("resolveShowdown: tiebreak — previous starter is eligible if they are themselves a tied loser", () => {
+  // Prev starter = B (seat 1), and B is a tied loser. Scan right from B's seat INCLUDING B → B starts.
+  const players = [seatL("A", 0, 3), seatL("B", 1, 3), seatL("C", 2, 3), seatL("D", 3, 3)];
+  const r = resolveShowdown(players, handsOf({ A: 9, B: 2, C: 7, D: 2 }), "B");
+  expect(r.loserIds.sort()).toEqual(["B", "D"]);
+  expect(r.outcome).toEqual({ kind: "continue", nextStartingPlayerId: "B" });
+});
+
+test("resolveShowdown: tiebreak-with-eliminated-loser — the tied loser was eliminated, next surviving seat to their right starts (AC-3.1.6)", () => {
+  // A,B,C survivors (3 lives); D at seat 3 has 1 life. Lowest rank shared by B(seat1, 3 lives) and
+  // D(seat3, 1 life) → both lose; D drops to 0 → eliminated. Prev starter = C (seat 2). Scan right
+  // from C: seat 3 (D) is a tied loser BUT eliminated → skip to the next surviving seat to D's right
+  // = seat 0 (A). But A is not a tied loser... the rule: earliest TIED loser seated from prev starter;
+  // if that loser is eliminated, the next SURVIVING seat to THEIR right. So from C: first tied loser
+  // scanning right is D (seat 3); D eliminated → next surviving seat right of D = A (seat 0).
+  const players = [seatL("A", 0, 3), seatL("B", 1, 3), seatL("C", 2, 3), seatL("D", 3, 1)];
+  const r = resolveShowdown(players, handsOf({ A: 9, B: 2, C: 7, D: 2 }), "C");
+  expect(r.loserIds.sort()).toEqual(["B", "D"]);
+  const byId = Object.fromEntries(r.players.map((p) => [p.id, p]));
+  expect(byId.D.isAlive).toBe(false);
+  expect(r.outcome).toEqual({ kind: "continue", nextStartingPlayerId: "A" });
+});
+
+test("resolveShowdown: E3 — MULTIPLE tied losers ALL eliminated while ≥2 survive; scan skips ALL of them to the next surviving seat", () => {
+  // Seats: A(0,3) B(1,1) C(2,1) D(3,3) E(4,3). Lowest rank shared by B,C (both 1 life) → both lose,
+  // both eliminated. Survivors after: A,D,E (≥2 alive → continue). Prev starter = A (seat 0). Scan
+  // right from A: first tied loser is B (seat 1); B eliminated → next surviving seat right of B that
+  // skips the OTHER eliminated tied loser C (seat 2) → D (seat 3).
+  const players = [seatL("A", 0, 3), seatL("B", 1, 1), seatL("C", 2, 1), seatL("D", 3, 3), seatL("E", 4, 3)];
+  const r = resolveShowdown(players, handsOf({ A: 9, B: 3, C: 3, D: 7, E: 8 }), "A");
+  expect(r.loserIds.sort()).toEqual(["B", "C"]);
+  const byId = Object.fromEntries(r.players.map((p) => [p.id, p]));
+  expect(byId.B.isAlive).toBe(false);
+  expect(byId.C.isAlive).toBe(false);
+  expect(r.outcome).toEqual({ kind: "continue", nextStartingPlayerId: "D" });
+});
+
+test("resolveShowdown: PARAMETERIZED 2..20 — single lowest loser resolves correctly at every table size", () => {
+  for (let n = 2; n <= 20; n++) {
+    const players = Array.from({ length: n }, (_, i) => seatL(`P${i}`, i, 3));
+    // P0 gets the unique lowest rank (1); everyone else gets rank 13 (Kings) so P0 is the sole loser.
+    const byRank: Record<string, number> = { P0: 1 };
+    for (let i = 1; i < n; i++) byRank[`P${i}`] = 13;
+    const r = resolveShowdown(players, handsOf(byRank), "P0");
+    expect(r.loserIds).toEqual(["P0"]);
+    const p0 = r.players.find((p) => p.id === "P0")!;
+    expect(p0.lives).toBe(2);
+    // ≥2 alive at every n≥2 here (only P0 loses one of 3 lives) → continue, P0 starts.
+    expect(r.outcome).toEqual({ kind: "continue", nextStartingPlayerId: "P0" });
+  }
+});
+
+test("resolveShowdown: PARAMETERIZED 2..20 — all-tied deducts one life from EVERY player at every table size", () => {
+  for (let n = 2; n <= 20; n++) {
+    const players = Array.from({ length: n }, (_, i) => seatL(`P${i}`, i, 3));
+    const byRank: Record<string, number> = {};
+    for (let i = 0; i < n; i++) byRank[`P${i}`] = 6; // everyone the same rank → all lose.
+    const r = resolveShowdown(players, handsOf(byRank), "P0");
+    expect(r.loserIds.sort()).toEqual(players.map((p) => p.id).sort());
+    for (const p of r.players) expect(p.lives).toBe(2);
+    expect(r.outcome.kind).toBe("continue"); // all still at 2 lives → ≥2 alive.
+  }
+});
+
+test("resolveShowdown: PARAMETERIZED 2..20 — all-tied-to-zero is a shared win naming every player at every table size", () => {
+  for (let n = 2; n <= 20; n++) {
+    const players = Array.from({ length: n }, (_, i) => seatL(`P${i}`, i, 1)); // everyone at 1 life
+    const byRank: Record<string, number> = {};
+    for (let i = 0; i < n; i++) byRank[`P${i}`] = 5; // all tied → all drop to 0 → 0 alive → shared win.
+    const r = resolveShowdown(players, handsOf(byRank), "P0");
+    expect(r.outcome.kind).toBe("winner");
+    if (r.outcome.kind === "winner") {
+      expect(r.outcome.winnerIds.sort()).toEqual(players.map((p) => p.id).sort());
+    }
+  }
+});
+
+test("resolveShowdown: PARAMETERIZED 2..20 — two-way tie deducts a life from BOTH tied lowest at every table size", () => {
+  for (let n = 2; n <= 20; n++) {
+    const players = Array.from({ length: n }, (_, i) => seatL(`P${i}`, i, 3));
+    // P0 and P1 tie for the unique lowest rank (1); everyone else (n≥3) holds a King so only P0,P1 lose.
+    const byRank: Record<string, number> = { P0: 1, P1: 1 };
+    for (let i = 2; i < n; i++) byRank[`P${i}`] = 13;
+    const r = resolveShowdown(players, handsOf(byRank), "P0");
+    expect(r.loserIds.sort()).toEqual(["P0", "P1"]);
+    const byId = Object.fromEntries(r.players.map((p) => [p.id, p]));
+    expect(byId.P0.lives).toBe(2);
+    expect(byId.P1.lives).toBe(2);
+    for (let i = 2; i < n; i++) expect(byId[`P${i}`].lives).toBe(3); // non-losers untouched.
+    // ≥2 alive everywhere (all losers were at 3 lives) → continue; earliest tied loser from P0 = P0.
+    expect(r.outcome).toEqual({ kind: "continue", nextStartingPlayerId: "P0" });
+  }
+});
+
+test("resolveShowdown: PARAMETERIZED 2..20 — single-survivor win (all-but-one tied to zero) at every table size", () => {
+  for (let n = 2; n <= 20; n++) {
+    // P0..P(n-2) at 1 life tie for lowest → all drop to 0 → eliminated; P(n-1) at 3 lives survives → wins.
+    const players = Array.from({ length: n }, (_, i) => seatL(`P${i}`, i, i === n - 1 ? 3 : 1));
+    const byRank: Record<string, number> = {};
+    for (let i = 0; i < n - 1; i++) byRank[`P${i}`] = 2; // the tied lowest → all lose.
+    byRank[`P${n - 1}`] = 13; // the lone survivor holds the highest, never a loser.
+    const r = resolveShowdown(players, handsOf(byRank), "P0");
+    expect(r.outcome).toEqual({ kind: "winner", winnerIds: [`P${n - 1}`] }); // sole winner, no tiebreak.
+  }
+});
+
+test("resolveShowdown: PARAMETERIZED 2..20 — tiebreak-with-eliminated-loser: scan skips the dead loser to the next surviving seat (AC-3.1.6)", () => {
+  // The eliminated-loser skip needs a tied loser to be eliminated WHILE ≥2 survive → smallest n is 3.
+  for (let n = 3; n <= 20; n++) {
+    // Seat 0 (P0) is a tied loser at 1 life → eliminated; seat 1 (P1) is a tied loser at 3 lives → survives.
+    // Everyone else (seats 2..) holds a King and is untouched. Prev starter = P0 (seat 0). Scan right from
+    // seat 0: P0 is the earliest tied loser BUT eliminated → next surviving seat to its right = P1 (seat 1).
+    const players = Array.from({ length: n }, (_, i) => seatL(`P${i}`, i, i === 0 ? 1 : 3));
+    const byRank: Record<string, number> = { P0: 2, P1: 2 };
+    for (let i = 2; i < n; i++) byRank[`P${i}`] = 13;
+    const r = resolveShowdown(players, handsOf(byRank), "P0");
+    expect(r.loserIds.sort()).toEqual(["P0", "P1"]);
+    const byId = Object.fromEntries(r.players.map((p) => [p.id, p]));
+    expect(byId.P0.isAlive).toBe(false); // the eliminated tied loser.
+    expect(r.outcome).toEqual({ kind: "continue", nextStartingPlayerId: "P1" });
+  }
+});
+
+test("resolveShowdown: PARAMETERIZED 4..20 — E3 multiple tied losers ALL eliminated, scan skips ALL to the next survivor (AC-3.1.6)", () => {
+  // Two ADJACENT tied losers (seats 0,1) both at 1 life → both eliminated while ≥2 survive (seats 2..).
+  // Needs ≥2 survivors AFTER removing 2 losers → smallest n is 4. Prev starter = P0 (seat 0): scan right
+  // hits P0 (dead loser) → next surviving seat skips P1 (the OTHER dead loser) → P2 (seat 2).
+  for (let n = 4; n <= 20; n++) {
+    const players = Array.from({ length: n }, (_, i) => seatL(`P${i}`, i, i < 2 ? 1 : 3));
+    const byRank: Record<string, number> = { P0: 2, P1: 2 };
+    for (let i = 2; i < n; i++) byRank[`P${i}`] = 13;
+    const r = resolveShowdown(players, handsOf(byRank), "P0");
+    expect(r.loserIds.sort()).toEqual(["P0", "P1"]);
+    const byId = Object.fromEntries(r.players.map((p) => [p.id, p]));
+    expect(byId.P0.isAlive).toBe(false);
+    expect(byId.P1.isAlive).toBe(false);
+    expect(r.outcome).toEqual({ kind: "continue", nextStartingPlayerId: "P2" });
+  }
+});
+
+// ---- resolveShowdown precondition asserts (Story 3.1, code-review 2026-06-22) ----
+// assert-in-primitive extended to resolveShowdown so the 3.4 dealAgain caller (possibly-eliminated
+// previous host / malformed hands) gets a named Error, not a bare TypeError / silent no-op resolution.
+
+test("resolveShowdown: ASSERTS a seated previousStartingPlayerId — throws when the previous starter is not in players", () => {
+  const players = [seatL("A", 0, 3), seatL("B", 1, 3), seatL("C", 2, 3)];
+  // "Z" is not seated (the eliminated-and-removed previous host hazard) → named throw, not a TypeError.
+  expect(() => resolveShowdown(players, handsOf({ A: 2, B: 7, C: 9 }), "Z")).toThrow(/not a seated player/);
+  // A real seated previous starter still resolves (no regression).
+  expect(() => resolveShowdown(players, handsOf({ A: 2, B: 7, C: 9 }), "A")).not.toThrow();
+});
+
+test("resolveShowdown: ASSERTS at least one revealed hand — throws on empty hands (no Math.min(Infinity) no-op)", () => {
+  const players = [seatL("A", 0, 3), seatL("B", 1, 3)];
+  expect(() => resolveShowdown(players, {}, "A")).toThrow(/no revealed hands/);
+});
+
+// ---- Action-4 primitive hardening (Story 3.1, AC-3.1.7) -------------------
+// The forward-deferred precondition gaps come due at 3.4's dealAgain. Resolved decision:
+// assert-in-primitive (epic-2-retro-2026-06-22.md:74; deferred-work.md:45-47). The primitives
+// assert their own preconditions so a downstream caller can never silently corrupt state.
+
+test("dealRound: ASSERTS deck coverage — throws when deck.length < aliveCount (closes engine.ts:115 silent-undefined)", () => {
+  // 3 alive players but a composition that cannot cover them is rejected by the caller (assertDealable);
+  // the primitive itself now also guards. Force the breach: a single deck (52) cannot cover 53 alive.
+  const players = Array.from({ length: 53 }, (_, i) => seatL(`P${i}`, i, 3));
+  expect(() => dealRound(players, { decks: 1 }, seededRng(1), "P0")).toThrow();
+});
+
+test("dealRound: ASSERTS a valid alive starter — throws when startingPlayerId is not an alive seated player (closes engine.ts:118-120)", () => {
+  const players = [seatL("A", 0, 3), seatL("B", 1, 0, false), seatL("C", 2, 3)];
+  // Eliminated previous host (the 3.4 dealAgain hazard): B is not alive → cannot be the starter.
+  expect(() => dealRound(players, { decks: 1 }, seededRng(1), "B")).toThrow();
+  // Unknown id (not seated at all) → also rejected.
+  expect(() => dealRound(players, { decks: 1 }, seededRng(1), "Z")).toThrow();
+  // A real alive seated starter still works (no regression to the 2.3 path).
+  expect(() => dealRound(players, { decks: 1 }, seededRng(1), "A")).not.toThrow();
+});
+
+test("nextAliveSeat: ASSERTS a known fromSeatIndex — throws on an unknown seat (closes engine.ts:77,87 silent-guess)", () => {
+  const players = [seat("A", 0), seat("B", 1), seat("C", 2)];
+  // Seat 99 does not exist — must assert rather than silently walking from index 0.
+  expect(() => nextAliveSeat(players, 99)).toThrow();
+});
+
+test("nextAliveSeat: hardening preserves the lone-alive-seat-returns-itself contract (regression guard)", () => {
+  // A is the only alive seat at a KNOWN index → still returns itself; the assert is for UNKNOWN seats only.
+  const players = [seat("A", 0), seat("B", 1, false), seat("C", 2, false)];
+  expect(nextAliveSeat(players, 0)).toBe("A");
 });
