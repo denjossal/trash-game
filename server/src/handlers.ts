@@ -396,6 +396,15 @@ export async function handleHostRemovePlayer(
   if (host.table.nextStartingPlayerId === target.id) {
     host.table.nextStartingPlayerId = nextAliveSeat(host.table.players, target.seatIndex);
   }
+  // (c) LIVE-ROUND STARTER: if the removed Player is the CURRENT round's Starting Player, re-seat it too.
+  // resolveShowdown asserts `round.startingPlayerId` is a seated player (engine.ts:329) and isLastPlayer
+  // scans from it (engine.ts:260) — leaving the removed id here strands the round: the reveal throws a
+  // plain Error (rethrown by dispatch, AFTER phase→showdown but BEFORE the fan-out) so every device freezes
+  // on its last projection, and the "Draw from deck" affordance vanishes meanwhile. Symmetric with (a)/(b),
+  // pre-splice (nextAliveSeat asserts the seat still exists). [Playtest 2026-06-23; AR-5; engine.ts:329,260.]
+  if (round !== null && round.startingPlayerId === target.id) {
+    round.startingPlayerId = nextAliveSeat(host.table.players, target.seatIndex);
+  }
 
   // --- REMOVE: drop the seat (survivors KEEP their seatIndex — immutable-for-life, never re-indexed). ---
   host.table.players = host.table.players.filter((p) => p.id !== target.id);

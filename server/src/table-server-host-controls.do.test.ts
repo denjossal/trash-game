@@ -413,6 +413,72 @@ test("AC-4.2.4 (mid-Round, current turn is the LAST un-acted seat): removal comp
   for (const g of guests) g.close();
 });
 
+test("strand regression: removing the live round's Starting Player then revealing does NOT freeze the table", async () => {
+  // Playtest 2026-06-23: the game randomly stranded after a few rounds. ROOT CAUSE — handleHostRemovePlayer
+  // re-seated currentTurnId + the between-round nextStartingPlayerId, but NOT the LIVE round's
+  // round.startingPlayerId. resolveShowdown asserts that id is a seated player (engine.ts:329); with the
+  // starter removed, the reveal threw a plain Error (rethrown by dispatch) AFTER phase→showdown but BEFORE
+  // the fan-out, freezing every device. Repro: re-deal (the prior Loser becomes the new round's starter),
+  // remove that starter mid-round, drive the survivors' pass, reveal → must reach roundResult, not strand.
+  const { host, guests, result, hostId, p1Id, p2Id } = await driveToRoundResult("RMSTART");
+  const p2 = guests[1];
+  const stub = env.Table.get(env.Table.idFromName("RMSTART"));
+
+  // Re-deal: p1 (the prior Loser) is seated as the new round's startingPlayerId (and currentTurnId).
+  host.send({ type: "dealAgain", payload: { phaseToken: result.phaseToken } });
+  const dealt = await nextPhase(host, "turns");
+  const before = await runInDurableObject(stub, async (instance) => {
+    return { startingPlayerId: (instance as unknown as TableServer).table!.round!.startingPlayerId };
+  });
+  expect(before.startingPlayerId).toBe(p1Id); // precondition: p1 starts this round.
+
+  // Remove p1 — the live round's Starting Player — mid-round.
+  host.send({ type: "hostRemovePlayer", payload: { phaseToken: dealt.phaseToken, playerId: p1Id } });
+  const afterRemove = await nextRosterSize(host, 2);
+  expect(afterRemove.players.some((p) => p.id === p1Id)).toBe(false);
+  // THE FIX: the live round's starter must have been re-seated off the removed id.
+  const reseated = await runInDurableObject(stub, async (instance) => {
+    return { startingPlayerId: (instance as unknown as TableServer).table!.round?.startingPlayerId };
+  });
+  expect(reseated.startingPlayerId).not.toBe(p1Id);
+
+  // Drive the two survivors' one pass to allActed. p1 was on turn and was advanced + marked acted by the
+  // removal, so the remaining un-acted seats are host + p2. Keep on whoever currently holds the turn.
+  const conns = new Map<string, OpenConn>([[hostId, host], [p2Id, p2]]);
+  for (let i = 0; i < 3; i++) {
+    const live = await runInDurableObject(stub, async (instance) => {
+      const t = (instance as unknown as TableServer).table!;
+      return { phase: t.phase, currentTurnId: t.round?.currentTurnId ?? "", turnToken: t.round?.turnToken ?? 0 };
+    });
+    if (live.phase !== "turns") break;
+    const c = conns.get(live.currentTurnId);
+    if (!c) break;
+    c.send({ type: "keep", payload: { turnToken: live.turnToken } });
+    await new Promise((r) => setTimeout(r, 40)); // let the keep land before re-reading.
+  }
+
+  // Reveal — read the live phaseToken (projection ordering is noisy after a removal) and send revealAll.
+  const atAllActed = await runInDurableObject(stub, async (instance) => {
+    const t = (instance as unknown as TableServer).table!;
+    return { phase: t.phase, phaseToken: t.phaseToken };
+  });
+  expect(atAllActed.phase).toBe("allActed");
+  host.send({ type: "revealAll", payload: { phaseToken: atAllActed.phaseToken } });
+
+  // THE ASSERTION: resolveShowdown must run without throwing — the table reaches roundResult/gameOver, not a
+  // frozen "showdown". Poll the live phase (a strand leaves it stuck at "showdown" with no result forever).
+  let finalPhase = "showdown";
+  for (let i = 0; i < 25; i++) {
+    finalPhase = await runInDurableObject(stub, async (instance) => (instance as unknown as TableServer).table!.phase);
+    if (finalPhase === "roundResult" || finalPhase === "gameOver") break;
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  expect(["roundResult", "gameOver"]).toContain(finalPhase); // NOT stuck at "showdown".
+
+  host.close();
+  for (const g of guests) g.close();
+});
+
 test("AC-4.2.4 (mid-Round, non-current): removing a non-current Player leaves the turn unchanged", async () => {
   const { host, created, guests } = await lobbyOf("RMNON", 3);
   const { hostDealt, guestDealt } = await deal(host, created, guests);
