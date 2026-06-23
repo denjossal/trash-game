@@ -10,18 +10,21 @@
   //
   // It has NO live round (round=null on the coerced path), so it renders no hands — only the durable
   // result the projection still carries: the post-deduction Lives pips and the loser names (from
-  // state.loserIds + state.players, both restored by reconcileSummaryToState). The Re-deal block mirrors
-  // Showdown's inline Host-only conductor (the shared conductor-bar COMPONENT is Story 4.1).
+  // state.loserIds + state.players, both restored by reconcileSummaryToState).
+  //
+  // RE-DEAL (Story 3.4 / 4.1): the HOST'S Re-deal primary now lives in the shared conductor bar
+  // (ConductorBar.svelte, mounted as an overlay by App.svelte on the roundResult surface) — the inline
+  // Host Re-deal block that lived here was removed so there is exactly ONE Re-deal button (mirroring the
+  // Showdown change). The NON-HOST "waiting to re-deal" line STAYS on this surface: the bar is Host-only,
+  // so non-Hosts would otherwise have no cue.
   import type { ProjectedTableState } from "@trash/shared";
-  import Button from "../components/Button.svelte";
   import LivesPips from "../components/LivesPips.svelte";
-  import { RE_DEAL, WAITING_TO_REDEAL, ROUND_OVER } from "../lib/copy";
-  import { sendDealAgain } from "../lib/table-store.svelte";
+  import { WAITING_TO_REDEAL, ROUND_OVER } from "../lib/copy";
 
   const { state }: { state: ProjectedTableState } = $props();
 
-  // Re-deal is offered ONLY at `roundResult` (the ≥2-alive branch — gameOver routes to winner/eliminated,
-  // never here). The Host sees the primary action; others see the waiting line. Same gate as Showdown.
+  // The non-Host "waiting to re-deal" line is shown ONLY at `roundResult` (the ≥2-alive branch — gameOver
+  // routes to winner/eliminated, never here). The Host's Re-deal action is the conductor bar's (Story 4.1).
   const canReDeal = $derived(state.phase === "roundResult");
   const isHost = $derived(state.you.isHost);
 
@@ -50,18 +53,12 @@
     {/each}
   </ul>
 
-  {#if canReDeal}
-    <!-- Re-deal beat: Host-only primary action (one tap → next Round, Loser starts); others wait. The
-         same inline Host-only block as Showdown (the shared conductor-bar component is Story 4.1). -->
-    {#if isHost}
-      <div class="redeal" data-testid="redeal-host">
-        <Button onclick={() => sendDealAgain(state.phaseToken)}>{RE_DEAL}</Button>
-      </div>
-    {:else}
-      <p class="redeal-waiting" data-testid="redeal-waiting" role="status" aria-live="polite">
-        {WAITING_TO_REDEAL}
-      </p>
-    {/if}
+  {#if canReDeal && !isHost}
+    <!-- Re-deal beat (Story 3.4 / 4.1): the HOST'S Re-deal action is the conductor bar's (overlay, Story
+         4.1). Non-Hosts get the waiting line here so they still have a cue. -->
+    <p class="redeal-waiting" data-testid="redeal-waiting" role="status" aria-live="polite">
+      {WAITING_TO_REDEAL}
+    </p>
   {/if}
 </main>
 
@@ -113,9 +110,6 @@
   .seat.loser .name {
     color: var(--color-error);
     font-weight: var(--type-body-lg-weight);
-  }
-  .redeal {
-    margin-top: var(--space-stack-sm);
   }
   .redeal-waiting {
     margin: var(--space-stack-sm) 0 0;

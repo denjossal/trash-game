@@ -10,21 +10,18 @@
 //   - the coordinated flip is a discrete CSS hook (AC1) present on every card so the @media reduce-motion
 //     skip applies at runtime (jsdom does not evaluate @media — we assert the hook exists, mirroring how
 //     Button.svelte's reduce-motion is structured).
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/svelte";
+import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
 import { loser, RE_DEAL, TIE, WAITING_TO_REDEAL } from "../lib/copy";
 import { rankToLetter } from "../lib/card-display";
 import Showdown from "./Showdown.svelte";
 
-// The Re-deal block (Story 3.4) calls the store's sendDealAgain seam. Mock the store module so the test
-// asserts the surface posts the intent (the store→socket wiring is exercised by the table-store seam test).
-const sendDealAgain = vi.fn();
-vi.mock("../lib/table-store.svelte", () => ({ sendDealAgain: (token: number) => sendDealAgain(token) }));
+// Story 4.1 moved the Host's Re-deal action OFF this surface into the shared conductor bar (overlay). The
+// Showdown surface no longer imports any store seam — it only renders the non-Host "waiting to re-deal" line.
 
 afterEach(() => {
   cleanup();
-  sendDealAgain.mockClear();
 });
 
 function player(id: string, name: string, lives = 3, seatIndex = 0, isAlive = true) {
@@ -150,17 +147,15 @@ describe("Showdown surface", () => {
     expect(container.querySelector('[aria-label="Card, face-down"]')).not.toBeNull();
   });
 
-  // --- Story 3.4: the Host Re-deal affordance on the revealed beat (AC-3.4.3) ---
+  // --- Story 3.4 / 4.1: the revealed-beat Re-deal cue. The Host's Re-deal ACTION moved to the conductor
+  // bar (Story 4.1); this surface no longer renders RE_DEAL. Only the non-Host waiting line stays here. ---
 
-  it("at roundResult the Host sees the Re-deal action; a tap posts dealAgain with the phaseToken", async () => {
+  it("at roundResult the surface does NOT render the Host Re-deal action (it is the conductor bar's now)", () => {
     render(Showdown, { props: { state: state({ phase: "roundResult", loserIds: ["p2"] }) } });
-    const button = screen.getByText(RE_DEAL);
-    expect(button).toBeTruthy();
-    // Non-Host waiting line is absent for the Host.
+    // The Host Re-deal button is no longer on this surface (Story 4.1 moved it to ConductorBar).
+    expect(screen.queryByText(RE_DEAL)).toBeNull();
+    // The Host (isHost: true via the default state) sees no waiting line either — the bar carries their action.
     expect(screen.queryByText(WAITING_TO_REDEAL)).toBeNull();
-    await fireEvent.click(button);
-    expect(sendDealAgain).toHaveBeenCalledTimes(1);
-    expect(sendDealAgain).toHaveBeenCalledWith(3); // state.phaseToken
   });
 
   it("at roundResult a NON-Host sees the waiting line, not the Re-deal action", () => {

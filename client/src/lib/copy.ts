@@ -82,6 +82,14 @@ export const RE_DEAL = "Deal the next round";
 /** Non-Host waiting line on the revealed beat (Epic 3, Story 3.4) — others wait for the Host's Re-deal. */
 export const WAITING_TO_REDEAL = "Waiting on the host to deal again…";
 
+/** Conductor-bar Showdown primary (Story 4.1, FR-9/UX-DR14) — the Host's reveal action, shown only at the
+ *  `allActed` phase. Warm + plainspoken (the loud beat is the payoff; the button just invites it). */
+export const SHOWDOWN = "Show the cards";
+
+/** Host controls affordance label + sheet heading (Story 4.1, UX-DR13/UX-DR14) — the ⚙ accessible name and
+ *  the one-level overlay's heading. The three controls it holds (Lives, remove, reassign) are Story 4.2. */
+export const HOST_CONTROLS = "Host controls";
+
 /** Eliminated (Epic 3, Story 3.5) — also the surface shown today (Eliminated.svelte stub). */
 export const ELIMINATED = "You're out — stick around and heckle.";
 

@@ -19,24 +19,23 @@
   // SCOPE (AC-3.3.6): client surface ONLY. NO resolveShowdown call, NO loserIds/winnerIds producer, NO
   // Lives/elimination, NO RoundResult/Re-deal (3.4) or Eliminated/Winner (3.5/3.6), NO produced FX, NO
   // types.ts/projection/server change.
-  // RE-DEAL AFFORDANCE (AC-3.4.3, Story 3.4): because resolve-at-reveal KEEPS the round, a resolved
+  // RE-DEAL AFFORDANCE (Story 3.4 / 4.1): because resolve-at-reveal KEEPS the round, a resolved
   // `roundResult` projection still has revealed===true and routes HERE (route-from-state.ts:53). When the
-  // phase is `roundResult` (≥2 alive, re-dealable) the Host sees a primary Re-deal action and non-Hosts a
-  // "waiting to re-deal" line. ABSENT at `gameOver` — that projection routes to winner/eliminated
-  // (route-from-state.ts:48 wins over :53), never here (the terminal beat is Stories 3.6/3.5). This is an
-  // INLINE Host-only block mirroring the Lobby conductor's `{#if isHost}`; the shared conductor-bar
-  // COMPONENT is Story 4.1. The phaseToken comes from the projection; sendDealAgain is the GATE-1-exempt
-  // store seam (NEVER socket.send from a surface). [Source: epics.md#Story 3.4; UX-DR10/UX-DR14.]
+  // phase is `roundResult` (≥2 alive, re-dealable) the HOST'S Re-deal primary now lives in the shared
+  // conductor bar (Story 4.1, ConductorBar.svelte, mounted as an overlay by App.svelte) — the inline Host
+  // Re-deal block that lived here was removed. The NON-HOST "waiting to re-deal" line STAYS on this surface:
+  // the bar is Host-only, so non-Hosts would otherwise have no cue. ABSENT at `gameOver` — that projection
+  // routes to winner/eliminated (route-from-state.ts:48 wins over :53), never here (the terminal beat is
+  // Stories 3.6/3.5). [Source: epics.md#Story 3.4/4.1; UX-DR10/UX-DR14.]
   import type { ProjectedTableState } from "@trash/shared";
-  import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
-  import { loser, RE_DEAL, TIE, WAITING_TO_REDEAL } from "../lib/copy";
-  import { sendDealAgain } from "../lib/table-store.svelte";
+  import { loser, TIE, WAITING_TO_REDEAL } from "../lib/copy";
 
   const { state }: { state: ProjectedTableState } = $props();
 
-  // The Re-deal affordance is offered ONLY at `roundResult` (the ≥2-alive branch). At a bare `showdown`
-  // (no resolution yet — pre-3.4 dormant path) or `gameOver` (terminal, routed elsewhere) it is absent.
+  // The non-Host "waiting to re-deal" line is shown ONLY at `roundResult` (the ≥2-alive branch). At a bare
+  // `showdown` (no resolution yet — pre-3.4 dormant path) or `gameOver` (terminal, routed elsewhere) it is
+  // absent. The Host's Re-deal action is the conductor bar's (Story 4.1), not on this surface.
   const canReDeal = $derived(state.phase === "roundResult");
   const isHost = $derived(state.you.isHost);
 
@@ -98,18 +97,12 @@
     <p class="loser-copy" role="status" aria-live="polite">{loser(ownSeat.name)}</p>
   {/if}
 
-  {#if canReDeal}
-    <!-- Re-deal beat: Host-only primary action (one tap → next Round, Loser starts); others wait. Inline
-         Host-only block (the shared conductor-bar component is Story 4.1). Absent at gameOver. -->
-    {#if isHost}
-      <div class="redeal" data-testid="redeal-host">
-        <Button onclick={() => sendDealAgain(state.phaseToken)}>{RE_DEAL}</Button>
-      </div>
-    {:else}
-      <p class="redeal-waiting" data-testid="redeal-waiting" role="status" aria-live="polite">
-        {WAITING_TO_REDEAL}
-      </p>
-    {/if}
+  {#if canReDeal && !isHost}
+    <!-- Re-deal beat (Story 3.4 / 4.1): the HOST'S Re-deal action is the conductor bar's (overlay, Story
+         4.1). Non-Hosts get the waiting line here so they still have a cue. Absent at gameOver. -->
+    <p class="redeal-waiting" data-testid="redeal-waiting" role="status" aria-live="polite">
+      {WAITING_TO_REDEAL}
+    </p>
   {/if}
 </main>
 
@@ -216,10 +209,8 @@
     color: var(--color-error);
   }
 
-  /* Re-deal beat (Story 3.4): the Host's primary action / the non-Host waiting line, below the cards. */
-  .redeal {
-    margin-top: var(--space-stack-sm);
-  }
+  /* Re-deal beat (Story 3.4 / 4.1): the non-Host waiting line below the cards (the Host's Re-deal action is
+     the conductor bar's). */
   .redeal-waiting {
     margin: var(--space-stack-sm) 0 0;
     font-size: var(--type-body-lg-size);
