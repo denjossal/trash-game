@@ -169,6 +169,31 @@ export function buildNewGameIntent(phaseToken: number): PhaseIntent {
   return { type: "newGame", payload: { phaseToken } };
 }
 
+// --- Story 4.1: deal / revealAll send builders (the conductor-bar phase edges) ---
+//
+// The Host's two remaining phase-conducting sends, finally given a client seam: `deal` (lobby → round)
+// and `revealAll` (allActed → showdown). The server handlers + dispatch already exist (handleDeal /
+// handleReveal; dispatch.ts case "deal"/"revealAll") — Epic 2/3 built the SERVER side; the client could
+// not drive them by clicking until now (Lobby's Deal was a no-op; there was no revealAll send at all).
+// Both share the {phaseToken} payload with dealAgain/newGame (one grouped Intent member → reuse PhaseIntent;
+// the same Extract-by-grouped-member caveat). The conductor bar (ConductorBar.svelte) mounts these via the
+// table-store seams; the server's phase guard rejects a stale/double-tapped copy with `stale-phase`,
+// swallowed silently by the store. revealAll is additionally accepted ONLY at phase === "allActed".
+// [Source: shared/src/types.ts; server/src/dispatch.ts:90/135.]
+
+/** Build a `deal` intent (frozen payload `{phaseToken}`, Story 4.1, FR-14). The Host starts the round from
+ *  the Lobby (≥2 Players). The conductor bar supplies the current `phaseToken` from the projection. */
+export function buildDealIntent(phaseToken: number): PhaseIntent {
+  return { type: "deal", payload: { phaseToken } };
+}
+
+/** Build a `revealAll` intent (frozen payload `{phaseToken}`, Story 4.1, FR-9/FR-14). The Host triggers the
+ *  simultaneous reveal once everyone has acted; the server accepts it ONLY at phase `allActed`. The conductor
+ *  bar supplies the current `phaseToken` from the projection. */
+export function buildRevealAllIntent(phaseToken: number): PhaseIntent {
+  return { type: "revealAll", payload: { phaseToken } };
+}
+
 /**
  * Send a built intent on an already-open, kept-alive socket (the lobby keeps its socket open after
  * create/join). Thin builder-level helper so the Host Lobby surface (Story 1.10) can post a hostSetLives

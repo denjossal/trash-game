@@ -2,23 +2,20 @@
 //
 // RoundResult is reached ONLY by a roundResult projection that did NOT keep the round (revealed:false) —
 // the D2.1-coerced wake (eviction mid-round → round=null → phase coerced to roundResult). The normal loud
-// beat lives on Showdown while revealed===true. This surface MUST carry the Re-deal affordance so the game
-// is never soft-locked between rounds after a reload (the review finding this surface fixes): the Host sees
-// the Re-deal action; non-Hosts see the waiting line; both name the loser(s) + show the post-deduction pips
-// from the durable result the projection still carries.
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
-import { afterEach, describe, expect, it, vi } from "vitest";
+// beat lives on Showdown while revealed===true. The game must never soft-lock between rounds after a
+// reload: Story 4.1 moved the Host's Re-deal ACTION into the shared conductor bar (overlay), which mounts
+// on this surface too — so this surface no longer renders RE_DEAL itself. Only the non-Host "waiting to
+// re-deal" line stays here; both name the loser(s) + show the post-deduction pips from the durable result.
+import { cleanup, render, screen } from "@testing-library/svelte";
+import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
 import { RE_DEAL, WAITING_TO_REDEAL } from "../lib/copy";
 import RoundResult from "./RoundResult.svelte";
 
-const sendDealAgain = vi.fn();
-vi.mock("../lib/table-store.svelte", () => ({ sendDealAgain: (token: number) => sendDealAgain(token) }));
+// Story 4.1 moved the Host's Re-deal action OFF this surface into the shared conductor bar (overlay). The
+// RoundResult surface no longer imports any store seam — it only renders the non-Host "waiting" line.
 
-afterEach(() => {
-  cleanup();
-  sendDealAgain.mockClear();
-});
+afterEach(cleanup);
 
 // A coerced-wake roundResult projection: round lost → revealed:false, NO hands, but the durable result
 // (loserIds + post-deduction lives + nextStartingPlayerId on the server) is restored.
@@ -41,14 +38,12 @@ function state(over: Partial<ProjectedTableState> = {}): ProjectedTableState {
 }
 
 describe("RoundResult recovery surface", () => {
-  it("the Host sees the Re-deal action; a tap posts dealAgain with the phaseToken", async () => {
+  it("does NOT render the Host Re-deal action (it is the conductor bar's now, Story 4.1)", () => {
     render(RoundResult, { props: { state: state() } });
-    const button = screen.getByText(RE_DEAL);
-    expect(button).toBeTruthy();
+    // The Host Re-deal button is no longer on this surface; the bar overlay carries it.
+    expect(screen.queryByText(RE_DEAL)).toBeNull();
+    // The Host (isHost: true via the default state) sees no waiting line either — the bar carries their action.
     expect(screen.queryByText(WAITING_TO_REDEAL)).toBeNull();
-    await fireEvent.click(button);
-    expect(sendDealAgain).toHaveBeenCalledTimes(1);
-    expect(sendDealAgain).toHaveBeenCalledWith(4); // state.phaseToken
   });
 
   it("a NON-Host sees the waiting line, not the Re-deal action", () => {

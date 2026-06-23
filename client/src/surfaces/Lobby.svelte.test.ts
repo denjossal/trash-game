@@ -75,7 +75,7 @@ describe("Lobby surface", () => {
     expect(within(row).getByTestId("lives-numeral").textContent).toContain("4");
   });
 
-  it("a NON-HOST sees neither the Lives stepper nor the conductor bar", () => {
+  it("a NON-HOST sees neither the Lives stepper nor a Deal action", () => {
     render(Lobby, {
       props: {
         state: state({
@@ -88,21 +88,16 @@ describe("Lobby surface", () => {
     expect(screen.queryByRole("button", { name: /deal/i })).toBeNull();
   });
 
-  it("a HOST sees the Lives stepper and the conductor bar", () => {
+  it("a HOST sees the Lives stepper (the Deal action lives in the conductor bar, Story 4.1)", () => {
     render(Lobby, { props: { state: state() } });
     expect(screen.getByLabelText(/lives stepper/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /deal/i })).toBeTruthy();
   });
 
-  it("Deal is disabled at 1 player and enabled at >= 2", () => {
-    const { unmount } = render(Lobby, { props: { state: state({ players: [player("p1", "Mar")] }) } });
-    expect((screen.getByRole("button", { name: /deal/i }) as HTMLButtonElement).disabled).toBe(true);
-    unmount();
-
-    render(Lobby, {
-      props: { state: state({ players: [player("p1", "Mar", 3, 0), player("p2", "Beto", 3, 1)] }) },
-    });
-    expect((screen.getByRole("button", { name: /deal/i }) as HTMLButtonElement).disabled).toBe(false);
+  it("the Lobby surface itself no longer renders a Deal button (moved to ConductorBar in Story 4.1)", () => {
+    // The dead inline Deal placeholder (no-op onclick) was removed; the bar overlay owns the single Deal,
+    // and its disabled-until-≥2 behavior is pinned in ConductorBar.svelte.test.ts.
+    render(Lobby, { props: { state: state() } });
+    expect(screen.queryByRole("button", { name: /deal/i })).toBeNull();
   });
 
   it("the Host stepper sends hostSetLives with the current phaseToken", async () => {

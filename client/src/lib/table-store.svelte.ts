@@ -17,10 +17,12 @@ import type { ProjectedTableState } from "@trash/shared";
 import type { PartySocket } from "partysocket";
 import {
   buildDealAgainIntent,
+  buildDealIntent,
   buildDrawIntent,
   buildHostSetLivesIntent,
   buildKeepIntent,
   buildNewGameIntent,
+  buildRevealAllIntent,
   buildSwapIntent,
   createRoomWithRetry,
   joinRoomAndListen,
@@ -162,6 +164,31 @@ export function sendDealAgain(phaseToken: number): void {
 export function sendNewGame(phaseToken: number): void {
   if (liveSocket === null) return;
   sendIntent(liveSocket, buildNewGameIntent(phaseToken));
+}
+
+/**
+ * The Host DEALS the round from the Lobby (Story 4.1, FR-14) — the conductor bar's `lobby` primary. Sends
+ * `deal{phaseToken}` on the live socket via the GATE-1-exempt `sendIntent` (NEVER socket.send from a
+ * surface). The server validates Host authority + the phase token + the ≥2-Players/lobby gate, deals the
+ * round, and fans out a fresh `turns` tableState every device re-renders from; a stale/double-tap is rejected
+ * with `stale-phase` and swallowed silently (handleSocketMessage drops error envelopes — AC-2.2.3). The
+ * conductor bar passes the current `state.phaseToken`. Fire-and-forget; no-op without a live socket. */
+export function sendDeal(phaseToken: number): void {
+  if (liveSocket === null) return;
+  sendIntent(liveSocket, buildDealIntent(phaseToken));
+}
+
+/**
+ * The Host triggers the simultaneous REVEAL once everyone has acted (Story 4.1, FR-9/FR-14) — the conductor
+ * bar's `allActed` primary. Sends `revealAll{phaseToken}` on the live socket via the GATE-1-exempt `sendIntent`
+ * (NEVER socket.send from a surface). The server validates Host authority + the phase token + the `allActed`
+ * gate (the reveal is accepted ONLY there), flips `revealed`, resolves the showdown, and fans out a fresh
+ * tableState; a stale/double-tap or pre-allActed copy is rejected (`stale-phase`/`phase-illegal`) and swallowed
+ * silently (handleSocketMessage drops error envelopes — AC-2.2.3). The conductor bar passes the current
+ * `state.phaseToken`. Fire-and-forget; no-op without a live socket. */
+export function sendRevealAll(phaseToken: number): void {
+  if (liveSocket === null) return;
+  sendIntent(liveSocket, buildRevealAllIntent(phaseToken));
 }
 
 /** TEST-ONLY: reset the store + socket between cases. Not used by production code. */

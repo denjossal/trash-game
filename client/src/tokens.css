@@ -186,3 +186,26 @@ body {
   /* Honor the iOS safe-area (index.html sets viewport-fit=cover). */
   min-height: 100dvh;
 }
+
+/* ------------------------------------------------------------------------ */
+/* Icon button (NFR-10) — the ≥48dp circular control shared by the conductor */
+/* bar's ⚙ gear and the Host Controls sheet's ✕ close (Story 4.1). The       */
+/* touch-target + round-button treatment lives ONCE here; components set     */
+/* font-size for the glyph. Global so both components can apply `.icon-button`*/
+/* (Svelte scopes per-component styles, so a shared visual must be global).   */
+/* ------------------------------------------------------------------------ */
+.icon-button {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-container-highest);
+  color: var(--color-on-surface);
+  line-height: 1;
+  cursor: pointer;
+}
+.icon-button:focus-visible {
+  outline: var(--stroke-active);
+  outline-offset: 2px;
+}

@@ -22,11 +22,34 @@
   import RoundResult from "./surfaces/RoundResult.svelte";
   import Eliminated from "./surfaces/Eliminated.svelte";
   import Winner from "./surfaces/Winner.svelte";
+  import ConductorBar from "./components/ConductorBar.svelte";
 
   // The live read-only store (module-level $state in table-store.svelte.ts). Reading it inside a
   // $derived makes the routed surface re-evaluate whenever a new tableState lands on the socket.
   const state = $derived(readTableState());
   const surface = $derived(routeFromState(state));
+
+  // The Host conductor bar (Story 4.1, UX-DR14) mounts as an OVERLAY on top of the routed surface — it is
+  // NOT a routed Surface (route-from-state.ts keeps HostControls deliberately absent). It is shown only on
+  // the NON-TURN surfaces and NEVER on Your Turn / Home (AC-4.1.2). The bar itself is Host-only and shows a
+  // phase-appropriate primary only at lobby/allActed/roundResult, so this gate just excludes the surfaces it
+  // must never appear on.
+  //
+  // `eliminated` IS included (AR-5): an eliminated Host REMAINS the Host and keeps conducting Deal/Reveal/
+  // Re-deal — a Host knocked out mid-game (e.g. at roundResult with ≥2 others alive) routes to the Eliminated
+  // spectator surface but still needs to drive the next Re-deal, or the table is stranded
+  // (architecture.md:335-338). The bar is Host-only, so an eliminated NON-Host spectator still sees nothing.
+  // At `gameOver` the bar shows no primary (gameOver isn't in the phase→primary map) and the Eliminated
+  // surface carries its own inline "one more?" (Story 3.6) — so there is never a double action.
+  // `winner` is excluded: the winner is alive and the Winner surface owns the gameOver "one more?".
+  const showConductorBar = $derived(
+    state !== null &&
+      (surface === "lobby" ||
+        surface === "waiting" ||
+        surface === "showdown" ||
+        surface === "roundResult" ||
+        surface === "eliminated"),
+  );
 </script>
 
 {#if surface === "home"}
@@ -51,4 +74,10 @@
        (the router + this chain are two hand-synced lists) fails to a safe neutral frame
        instead of rendering nothing. -->
   <Home />
+{/if}
+
+{#if showConductorBar}
+  <!-- Host conductor bar overlay — layered above the routed surface, never on Your Turn / Home. The bar is
+       Host-only and self-hides when no phase primary applies (Story 4.1). -->
+  <ConductorBar state={state!} />
 {/if}
