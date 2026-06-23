@@ -20,3 +20,28 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+
+  # Auto-deploy both halves to Cloudflare's edge ONLY after the gates pass AND only on a push to main
+  # (never on a PR). Reuses the same `npm run deploy:*` scripts you run locally; the client build bakes
+  # the prod Worker URL from client/.env.production. Needs two repo secrets (Settings → Secrets and
+  # variables → Actions): CLOUDFLARE_API_TOKEN (Workers Scripts: Edit + Cloudflare Pages: Edit) and
+  # CLOUDFLARE_ACCOUNT_ID. Until those are set, this job fails fast and the gates job still protects main.
+  deploy:
+    needs: gates
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run deploy:server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - run: npm run deploy:client
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
