@@ -209,10 +209,26 @@
     width: 100%;
     max-width: 28rem;
     box-sizing: border-box;
+    /* Cap to the viewport and scroll INSIDE the sheet: a full roster (header + stepper + remove rows +
+       make-host rows) is taller than a phone screen, and the scrim is position:fixed — without this the
+       sheet grows PAST the top of the screen and the ✕/Lives controls become unreachable (no page scroll).
+       dvh tracks the mobile browser chrome better than vh. [Playtest 2026-06-23 — top controls cut off.] */
+    max-height: 90dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: var(--space-stack-md) var(--space-container-padding);
     background: var(--color-surface-container-high);
     border-top-left-radius: var(--radius-md);
     border-top-right-radius: var(--radius-md);
+  }
+  /* Narrow phones (≤24rem ≈ 384px): the fixed 32px side padding starves inner width so the ≥48dp
+     stepper (− value +) and the roster rows' fixed-size controls jam/clip. Halve the side padding to
+     recover ~32px of usable width. [Playtest 2026-06-23 — phone stepper misrender.] */
+  @media (max-width: 24rem) {
+    .sheet {
+      padding-left: var(--space-stack-sm);
+      padding-right: var(--space-stack-sm);
+    }
   }
   .sheet:focus-visible {
     outline: var(--stroke-active);
@@ -223,6 +239,22 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-stack-sm);
+    /* Keep the title + ✕ pinned while the sheet body scrolls, so Close is always reachable on a tall
+       roster. Negative margins + padding let the sticky bar span the sheet's full width over its padding. */
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin: calc(-1 * var(--space-stack-md)) calc(-1 * var(--space-container-padding)) 0;
+    padding: var(--space-stack-md) var(--space-container-padding) var(--space-stack-sm);
+    background: var(--color-surface-container-high);
+  }
+  @media (max-width: 24rem) {
+    .head {
+      margin-left: calc(-1 * var(--space-stack-sm));
+      margin-right: calc(-1 * var(--space-stack-sm));
+      padding-left: var(--space-stack-sm);
+      padding-right: var(--space-stack-sm);
+    }
   }
   h2 {
     font-family: var(--font-family-display);
@@ -300,9 +332,10 @@
   .row {
     display: flex;
     align-items: center;
+    flex-wrap: wrap; /* On narrow phones the remove/make-host control drops to a 2nd line instead of clipping. */
     gap: var(--space-stack-sm);
     min-height: 56px;
-    padding: 0 var(--space-gutter);
+    padding: var(--space-stack-sm) var(--space-gutter);
     background: var(--color-surface-container);
     border-radius: var(--radius-md);
   }
