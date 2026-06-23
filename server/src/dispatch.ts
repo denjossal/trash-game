@@ -1,11 +1,11 @@
 // dispatch.ts — intent router + phase-legality; the single try/catch that turns an IntentError into a
 // targeted `error` event. [Source: architecture.md#Canonical-round-trip, #The-rules table — single-error-catch-site]
 //
-// SCOPE (Story 1.6 → 1.7 → 1.8 → 2.3 → 2.4 → 2.6 → 3.2 → 3.4 → 3.6): routes createRoom + joinRoom +
+// SCOPE (Story 1.6 → 1.7 → 1.8 → 2.3 → 2.4 → 2.6 → 3.2 → 3.4 → 3.6 → 4.2): routes createRoom + joinRoom +
 // hostSetLives + deal + swap + keep + drawFromDeck + revealAll (the Showdown trigger — Story 3.2) +
-// dealAgain (the between-rounds re-deal — Story 3.4) + newGame (the "one more?" new-game-on-the-same-Table
-// transition gameOver→lobby — Story 3.6). The remaining gameplay intents (hostRemovePlayer/hostReassign —
-// Epic 4) are routed to an explicit not-yet-implemented rejection, NEVER silently accepted. The ONE
+// dealAgain (the between-rounds re-deal — Story 3.4) + newGame (the "one more?" gameOver→lobby — Story 3.6)
+// + hostRemovePlayer + hostReassign (the FR-14 mid-session Host controls — Story 4.2). Every contract intent
+// is now routed; the `default` is the explicit "never silently accept an unknown shape" backstop. The ONE
 // try/catch lives here; handlers throw IntentError and never send.
 //
 // LOBBY VALIDATION (Decision #1, AC-1.6.3/1.7.5/1.8.3): lobby-phase intents (createRoom, joinRoom,
@@ -28,6 +28,8 @@ import {
   handleDeal,
   handleDealAgain,
   handleDraw,
+  handleHostRemovePlayer,
+  handleHostReassign,
   handleHostSetLives,
   handleJoinRoom,
   handleKeep,
@@ -171,8 +173,30 @@ export async function dispatch(host: TableHost, connection: DispatchConnection, 
         fanOut(host.connections(), host.table!);
         return;
       }
-      // --- NOT yet implemented — explicit rejection, never a silent accept. ---
-      // hostRemovePlayer/hostReassign (Epic 4).
+      case "hostRemovePlayer": {
+        // The Host removes a Player from the Table (Story 4.2, FR-14). The handler runs the host-only +
+        // phase-token guard (NO phase gate — accepted at any phase the controls overlay is reachable from),
+        // splices the seat, and — if the removed Player was the current-turn seat mid-Round — advances the
+        // turn (nextAliveSeat) + marks them acted so the one-pass can still complete (AR-5). On a non-Host /
+        // stale double-tap / self-remove / bad id it throws (not-host / stale-phase / phase-illegal) BEFORE
+        // this line → the single try/catch emits a targeted `error` with NO fan-out. On success we fan out so
+        // every device re-renders the trimmed roster.
+        await handleHostRemovePlayer(host, intent, connection.state?.playerId);
+        fanOut(host.connections(), host.table!);
+        return;
+      }
+      case "hostReassign": {
+        // The Host hands the conductor role to another Player (Story 4.2, FR-14, AR-5). The handler runs the
+        // host-only + phase-token guard (NO phase gate), sets hostId to the target (an eliminated target is
+        // allowed — an eliminated Host keeps conducting), and persists. On a non-Host / stale / self / bad id
+        // it throws BEFORE this line → targeted `error`, NO fan-out. On success we fan out so the new Host's
+        // device gains the conductor bar/sheet (you.isHost) and the former Host's loses it.
+        await handleHostReassign(host, intent, connection.state?.playerId);
+        fanOut(host.connections(), host.table!);
+        return;
+      }
+      // --- The default is now genuinely unreachable for any contract intent (all are routed above); it
+      // remains as the explicit "never silently accept an unknown shape" backstop. ---
       default:
         throw new IntentError("phase-illegal");
     }

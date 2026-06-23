@@ -107,10 +107,38 @@ export function buildCreateRoomIntent(name: string): Extract<Intent, { type: "cr
 // the server accepts-but-does-not-guard it (Decision #1), so the caller passes the value from the current
 // tableState (0 in lobby). `lives` is the Host's chosen 1–5; the server CLAMPS out-of-range defensively.
 
-/** Build a `hostSetLives` intent (frozen payload `{phaseToken, lives}`). The Host Lobby stepper (1.10)
- *  supplies the chosen `lives` (1–5) and the current `phaseToken` (0 in lobby). [Source: shared/src/types.ts.] */
+/** Build a `hostSetLives` intent (frozen payload `{phaseToken, lives}`). The Host stepper supplies the
+ *  chosen `lives` (1–5) and the current `phaseToken` (0 in lobby, the live value mid-session). Story 1.8
+ *  shipped the wire; Story 4.2 moved the stepper into the ⚙ Host Controls sheet. [Source: shared/src/types.ts.] */
 export function buildHostSetLivesIntent(lives: number, phaseToken: number): Extract<Intent, { type: "hostSetLives" }> {
   return { type: "hostSetLives", payload: { phaseToken, lives } };
+}
+
+// --- Story 4.2: hostRemovePlayer / hostReassign send builders (the two new FR-14 Host controls) ---
+//
+// Both carry the current `phaseToken` from the projection + the target `playerId`. Unlike the grouped
+// deal/revealAll/dealAgain/newGame member (which needs the PhaseIntent alias to avoid `never`), each of
+// these is its OWN Intent member, so a single-literal `Extract<Intent, { type: "hostRemovePlayer" }>`
+// resolves correctly. The ⚙ Host Controls sheet mounts these via the table-store seams; the server's
+// host-only + phase-token guard rejects a non-Host / stale / self / bad-id copy (not-host / stale-phase /
+// phase-illegal), all swallowed silently by the store. [Source: shared/src/types.ts; handlers.ts.]
+
+/** Build a `hostRemovePlayer` intent (frozen payload `{phaseToken, playerId}`, Story 4.2, FR-14). The Host
+ *  removes a Player; the server excludes them from the next Deal (and advances the turn if they were on it). */
+export function buildHostRemovePlayerIntent(
+  playerId: string,
+  phaseToken: number,
+): Extract<Intent, { type: "hostRemovePlayer" }> {
+  return { type: "hostRemovePlayer", payload: { phaseToken, playerId } };
+}
+
+/** Build a `hostReassign` intent (frozen payload `{phaseToken, playerId}`, Story 4.2, FR-14). The Host hands
+ *  the conductor role to another Player; exactly one Host exists at any time (hostId is a single field). */
+export function buildHostReassignIntent(
+  playerId: string,
+  phaseToken: number,
+): Extract<Intent, { type: "hostReassign" }> {
+  return { type: "hostReassign", payload: { phaseToken, playerId } };
 }
 
 // --- Story 2.4: swap / keep send builders (the turn-scoped intents) ---

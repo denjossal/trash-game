@@ -2,10 +2,10 @@
 // (host.table = ...) or write ctx.storage, always AFTER validation/claim.
 // [Source: architecture.md#Canonical-round-trip, #Architectural-Boundaries — state-mutation boundary]
 //
-// SCOPE (Story 1.6 → 1.7 → 1.8): handleCreateRoom + handleJoinRoom + markDisconnected (the presence flip
-// onClose calls) + handleHostSetLives (the Host setting starting Lives in lobby). The gameplay handlers
-// (deal/swap/reveal/the remaining host-controls, Epics 2–4) are NOT implemented here yet — dispatch.ts
-// routes them to an explicit "not in this story" rejection, never a silent accept.
+// SCOPE: handleCreateRoom + handleJoinRoom + markDisconnected (the presence flip onClose calls) + the full
+// gameplay set (deal/swap/keep/draw/reveal/dealAgain/newGame) + the FR-14 Host mid-session controls —
+// handleHostSetLives (now any-phase, Story 4.2 — was lobby-only in 1.8), handleHostRemovePlayer, and
+// handleHostReassign (Story 4.2). dispatch.ts routes every contract intent to one of these.
 import type { Intent, Player, Round, TableState } from "@trash/shared";
 import { DEFAULT_LIVES, IntentError, MAX_LIVES, MAX_PLAYERS, MIN_LIVES, MIN_PLAYERS } from "@trash/shared";
 import { issueIdentity } from "./identity.js";
@@ -17,6 +17,7 @@ import {
   applySwap,
   dealRound,
   isLastPlayer,
+  nextAliveSeat,
   resolveShowdown,
 } from "./rules/engine.js";
 import { assertDealable, bumpPhaseToken, bumpTurnToken, checkPhaseToken, checkTurnToken } from "./rules/validate.js";
@@ -214,9 +215,13 @@ export async function handleJoinRoom(
   }
 
   // --- APPEND the joining Player (sole state-assignment site for join; atomic with the cap-check) ---
-  // Fresh server-issued identity (playerId keys all state; never socket id). seatIndex = current length
-  // — append-only, immutable-for-life, never re-indexed (architecture lines 316–320). lives seeds from
-  // the Table's startingLives (the Host may have set it, Story 1.8; defaults to DEFAULT_LIVES at create).
+  // Fresh server-issued identity (playerId keys all state; never socket id). seatIndex is monotonic —
+  // `max(existing seatIndex) + 1` (0 for an empty roster) — NOT `players.length`. The length rule was safe
+  // only while the roster was append-only; once Story 4.2's hostRemovePlayer splices a seat, `length` would
+  // reuse a live seat's index (a roster [seat0, seat2] has length 2 → the next join would collide with
+  // seat2, and nextAliveSeat's seatIndex walk would mis-step). seatIndex stays immutable-for-life AND never
+  // reused (architecture.md:316-320). lives seeds from startingLives (the Host may have set it, Story 1.8).
+  // [Source: deferred-work #44 — closed by Story 4.2.]
   const { playerId } = issueIdentity();
   const joiner: Player = {
     id: playerId,
@@ -224,7 +229,8 @@ export async function handleJoinRoom(
     lives: host.table.startingLives,
     isAlive: true,
     isConnected: true,
-    seatIndex: host.table.players.length,
+    seatIndex:
+      host.table.players.length === 0 ? 0 : Math.max(...host.table.players.map((p) => p.seatIndex)) + 1,
   };
   // Append in memory FIRST (the commit point — no yield since the cap-check above), then persist. A
   // second concurrent join, serialized behind this turn, now sees the appended roster length.
@@ -235,42 +241,44 @@ export async function handleJoinRoom(
 }
 
 /**
- * handleHostSetLives — the Host sets the starting Lives for the Table in `lobby` (FR-4). Mutates the
- * config: clamps `lives` to MIN_LIVES..MAX_LIVES, assigns `startingLives`, syncs EVERY Player's `lives`
- * to the same value (pre-Deal every Player is equal — no spent/remaining distinction yet), and persists
- * the durable summary. Returns void — the caller is already seated/stamped; set-lives binds no identity.
+ * handleHostSetLives — the Host sets Lives for the Table (FR-4 starting Lives in lobby; FR-14 mid-session
+ * change between Rounds). Mutates the config: clamps `lives` to MIN_LIVES..MAX_LIVES, assigns
+ * `startingLives`, syncs every STILL-ALIVE Player's `lives` to the same value, and persists. Returns void —
+ * the caller is already seated/stamped; set-lives binds no identity.
  *
  * `callerPlayerId` is the connection's current stamp (dispatch reads `connection.state?.playerId`, the
  * SAME stamp the join re-seat guard uses). An unstamped socket (never created/joined) → `undefined` →
  * `!== hostId` → `not-host`, the correct refusal for a socket that has no business setting config.
  *
- * VALIDATION ORDER (lightweight phase-checking + DO serialization, Decision #1 — NOT the Epic 2 two-scope
- * guard, which would no-op in `lobby`): shape → table-null → phase → host → clamp. Each precedes the sole
- * state assignment.
+ * VALIDATION ORDER (lightweight phase-checking + DO serialization, Decision #1): shape → table-null →
+ * not-host → checkPhaseToken. Each precedes the sole state assignment. (NO phase gate — Story 4.2 lifts the
+ * lobby-only restriction so the Host can adjust Lives mid-session, FR-14; it is accepted at any phase the
+ * controls overlay is reachable from.)
  *   - SHAPE (AC-1.8.4): a missing payload / non-finite `lives` would throw a raw TypeError on the clamp
  *     read below — NOT an IntentError, so dispatch would rethrow and the client would get no `error` and
- *     hang. Reject the malformed shape cleanly as `phase-illegal` (the closest honest frozen reason — the
- *     SAME documented precedent as handleCreateRoom/handleJoinRoom; out-of-RANGE numeric `lives` is NOT a
- *     shape error — it CLAMPS, AC-1.8.1). [Source: handlers.ts:72/166 payload-shape-guard precedent.]
- *   - table-null: a set-lives to an unclaimed DO cannot happen via the shipped client (you must
- *     create/join first, which warms `host.table`); onStart hydrates before the first onMessage, so null
- *     ⇒ never claimed. Guard defensively as `phase-illegal` (no room to configure).
- *   - phase-illegal (AC-1.8.3): `phase !== "lobby"` ⇒ refuse. Setting *starting* Lives is a pre-Deal/lobby
- *     action; the mid-session Lives change (clamp-vs-top-up, M1) is Story 4.2 / FR-14, NOT this story.
- *   - not-host (AC-1.8.2): `callerPlayerId !== hostId` ⇒ refuse. FIRST use of the frozen `not-host`
- *     ErrorReason. The server enforces host-authority independently of the client (NFR-2): a crafted wire
- *     message from a non-Host device is refused here even though Story 1.10 also hides the stepper.
+ *     hang. Reject the malformed shape cleanly as `phase-illegal` (the closest honest frozen reason; an
+ *     out-of-RANGE numeric `lives` is NOT a shape error — it CLAMPS, AC-1.8.1).
+ *   - table-null: a set-lives to an unclaimed DO cannot happen via the shipped client; guard defensively
+ *     as `phase-illegal` (no room to configure).
+ *   - not-host (AC-1.8.2/NFR-2): `callerPlayerId !== hostId` ⇒ refuse. The server enforces host-authority
+ *     independently of the client.
+ *   - checkPhaseToken (AC-4.2.2): a stale/double-tapped copy → `stale-phase`. In `lobby` the token is 0 and
+ *     the client passes 0, so the check passes there too (the lobby Story-1.8 path is unregressed); mid-
+ *     session the token is the current live value and a stale copy is rejected. NOT bumped — setting config
+ *     is not a phase transition (only deal/reveal/re-deal/newGame and the roster/host mutations bump it).
  *
- * phaseToken is CARRIED in the payload but NOT guarded in lobby (it is 0 and never advances pre-Deal —
- * Decision #1), and set-lives does NOT bump it (setting config is not a phase transition — only
- * deal/reveal/re-deal/newGame bump phaseToken). [Source: architecture.md D4 lines 389–403; types.ts.]
+ * M1 — "set ongoing, never revive" (Story 4.2, the resolved product decision): the lives-sync loop is gated
+ * on `isAlive`, so an eliminated (0-life, `isAlive === false`) Player is NEVER touched — permanent
+ * elimination (Architecture D1, Story 3.5) is preserved. A raise tops up live Players; a lower clamps them;
+ * the dead stay dead. Safe in lobby too (pre-Deal every seat is alive), so the single gated loop serves both
+ * paths. `startingLives` is still set for all (it is the table config — used by handleNewGame / handleJoinRoom
+ * for future seats). [Source: implementation-readiness-report M1; epics.md#Story-4.2 AC-4.2.1.]
  *
  * PERSIST (unlike the memory-only presence flip): `startingLives` AND `players[].lives` are BOTH durable
  * fields, so a reload must see the Host's chosen value — this handler MUST persistSummary. Idempotent:
- * re-setting the same value re-persists + re-fans-out harmlessly (no early-return; a re-fan-out is cheap
- * and keeps every device authoritative). No concurrency cap (it mutates existing fields, appends nothing);
- * the only `await` is the persist, after the in-memory mutation — read→decide→write stays a tight single
- * DO turn. [Source: persistence.ts DurablePlayer/DurableSummary; architecture single-threaded DO turn.]
+ * re-setting the same value re-persists + re-fans-out harmlessly. The only `await` is the persist, after the
+ * in-memory mutation — read→decide→write stays a tight single DO turn.
+ * [Source: persistence.ts DurablePlayer/DurableSummary; architecture.md D4 lines 389–403; types.ts.]
  */
 export async function handleHostSetLives(
   host: TableHost,
@@ -287,26 +295,190 @@ export async function handleHostSetLives(
     throw new IntentError("phase-illegal");
   }
 
-  // --- phase-illegal (AC-1.8.3): setting STARTING Lives is lobby-only; mid-session is Story 4.2. ---
-  if (host.table.phase !== "lobby") {
-    throw new IntentError("phase-illegal");
-  }
-
-  // --- not-host (AC-1.8.2): only the Host may set Lives (server-authoritative, NFR-2). ---
+  // --- not-host (AC-1.8.2/NFR-2): only the Host may set Lives (server-authoritative). ---
   if (callerPlayerId !== host.table.hostId) {
     throw new IntentError("not-host");
   }
+
+  // --- checkPhaseToken (AC-4.2.2): a stale/double-tapped copy → `stale-phase`. In lobby the token is 0 and
+  // the client passes 0 (lobby Story-1.8 path unregressed); mid-session a stale copy is rejected. NO phase
+  // gate (Story 4.2 lifts lobby-only — the Host adjusts Lives mid-session, FR-14) and NO bump (config, not
+  // a transition). ---
+  checkPhaseToken(host.table, intent.payload.phaseToken);
 
   // --- CLAMP (AC-1.8.1): constrain to 1..5; out-of-range clamps (never errors). Math.trunc so a
   // fractional value floors toward an integer (defensive — the client stepper only sends integers). ---
   const next = Math.max(MIN_LIVES, Math.min(MAX_LIVES, Math.trunc(intent.payload.lives)));
 
-  // --- MUTATE + PERSIST (sole state-assignment site): set startingLives AND sync every Player's lives.
-  // Pre-Deal the invariant is `every players[i].lives === startingLives` (seeded equal at create/join);
-  // keep them equal so the lobby roster's Lives pips (Story 1.10) match the stepper. The only await is the
-  // persist, after the in-memory mutation — startingLives + players[].lives are durable (MUST persist). ---
+  // --- MUTATE + PERSIST (sole state-assignment site): set startingLives, then sync the lives of every
+  // STILL-ALIVE Player to the new value (M1 "set ongoing, never revive" — an eliminated 0-life seat is
+  // NEVER touched, so permanent elimination holds). Pre-Deal every seat is alive, so the gated loop keeps
+  // the lobby invariant (`every alive players[i].lives === startingLives`) too. startingLives is set for all
+  // (table config). The only await is the persist, after the in-memory mutation. ---
   host.table.startingLives = next;
-  for (const p of host.table.players) p.lives = next;
+  for (const p of host.table.players) if (p.isAlive) p.lives = next;
+  await persistSummary(host.storage, host.table);
+}
+
+/**
+ * handleHostRemovePlayer — the Host removes a Player from the Table (Story 4.2, FR-14, AR-5). The removed
+ * Player leaves the roster and is excluded from the next Deal (dealRound deals to remaining `isAlive` seats
+ * only). Accepted at ANY phase the controls overlay is reachable from (NOT a single-phase transition, so it
+ * does NOT use requirePhaseConductor's phase gate) — but it IS a roster mutation, so it guards + bumps the
+ * phase token (double-tap safety) and persists (the roster is durable).
+ *
+ * GUARD ORDER (mirrors the host-only + token discipline, NO phase gate): shape (phaseToken finite +
+ * playerId a non-empty string → `phase-illegal`) → table-null (`phase-illegal`) → not-host (`not-host`) →
+ * checkPhaseToken (`stale-phase`) → target-exists / not-self (`phase-illegal`). All throw BEFORE any mutation.
+ *
+ * MID-ROUND CURRENT-TURN REMOVAL (AR-5; epics.md:851) — the one exception to "removal resolves at the next
+ * Showdown/Re-deal, not by rewriting the current Round": if `phase === "turns"` and the removed Player is
+ * `round.currentTurnId`, the turn would stall on a gone seat. So we advance `currentTurnId = nextAliveSeat(
+ * removed.seatIndex)` and add the removed id to `round.acted` (so the one-pass can still satisfy `turns →
+ * allActed`). ORDER IS LOAD-BEARING: nextAliveSeat ASSERTS its `fromSeatIndex` exists in the array
+ * (engine.ts:96) — so we compute the advance BEFORE the splice (while the target seat is still present),
+ * then remove. AFTER the splice we re-run `maybeCompletePass` against the now-current roster: removing the
+ * on-turn Player can leave every remaining alive seat already in `acted`, and the `turns → allActed`
+ * transition (which gates `revealAll`) otherwise only fires inside the turn handlers — so removal must drive
+ * it too, or the Round strands. A non-current removal leaves the round untouched.
+ *
+ * SELF-REMOVE FORBIDDEN: the Host cannot remove themselves via this control (reassign first, then leave) —
+ * `target.id === hostId` → `phase-illegal`. The UI hides the host's own remove affordance; the server
+ * enforces it. NO win logic here — if removal drops the alive count, the next Deal/Re-deal handles it
+ * (handleDeal enforces ≥ MIN_PLAYERS); resolveShowdown owns win-resolution at the next reveal.
+ * [Source: architecture.md 316-344; epics.md#Story-4.2 AC-4.2.3/.4; engine.ts nextAliveSeat.]
+ */
+export async function handleHostRemovePlayer(
+  host: TableHost,
+  intent: Extract<Intent, { type: "hostRemovePlayer" }>,
+  callerPlayerId: string | undefined,
+): Promise<void> {
+  // --- SHAPE GUARD: a non-finite phaseToken or an absent/empty playerId rejects cleanly as phase-illegal
+  // (not a raw TypeError that would hang the client). ---
+  if (
+    typeof intent.payload?.phaseToken !== "number" ||
+    !Number.isFinite(intent.payload.phaseToken) ||
+    typeof intent.payload?.playerId !== "string" ||
+    intent.payload.playerId.length === 0
+  ) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- table-null (defensive): an unclaimed DO has no roster to mutate. ---
+  if (host.table === null) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- not-host (NFR-2): only the Host removes a Player. ---
+  if (callerPlayerId !== host.table.hostId) {
+    throw new IntentError("not-host");
+  }
+
+  // --- checkPhaseToken: a stale/double-tapped copy → `stale-phase`, BEFORE any mutation. ---
+  checkPhaseToken(host.table, intent.payload.phaseToken);
+
+  // --- target must exist and must NOT be the Host (self-remove forbidden — reassign first). ---
+  const target = host.table.players.find((p) => p.id === intent.payload.playerId);
+  if (target === undefined || target.id === host.table.hostId) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- PRE-SPLICE DERIVATIONS (nextAliveSeat ASSERTS its fromSeatIndex exists — engine.ts:96 — so any
+  // "next seat to the removed seat's right" MUST be computed while the target is still in the array): ---
+  const round = host.table.round;
+  // (a) MID-ROUND CURRENT-TURN EDGE (AR-5): if the removed Player is on turn, advance the turn + mark them
+  // acted so the one-pass can still complete. A non-current removal does not rewrite the round.
+  const removedCurrentTurn =
+    host.table.phase === "turns" && round !== null && round.currentTurnId === target.id;
+  if (removedCurrentTurn && round !== null) {
+    round.currentTurnId = nextAliveSeat(host.table.players, target.seatIndex);
+    if (!round.acted.includes(target.id)) round.acted.push(target.id);
+  }
+  // (b) BETWEEN-ROUND STARTER: if the removed Player is the resolved Loser stashed as the next Starting
+  // Player (roundResult), re-seat it to the next alive survivor — clearing it would crash the next
+  // dealAgain (its roundResult invariant requires a stashed starter — handlers.ts:692). [Review 2026-06-23.]
+  if (host.table.nextStartingPlayerId === target.id) {
+    host.table.nextStartingPlayerId = nextAliveSeat(host.table.players, target.seatIndex);
+  }
+
+  // --- REMOVE: drop the seat (survivors KEEP their seatIndex — immutable-for-life, never re-indexed). ---
+  host.table.players = host.table.players.filter((p) => p.id !== target.id);
+
+  // --- RECONCILE BETWEEN-ROUND RESULT (any phase): removal is accepted at roundResult/gameOver where
+  // loserIds/winnerIds live (types.ts:99-109). Strip the gone id so the Winner surface never names a
+  // removed Player. (nextStartingPlayerId was re-seated above, before the splice.) [Review 2026-06-23.] ---
+  if (host.table.winnerIds !== undefined) {
+    host.table.winnerIds = host.table.winnerIds.filter((id) => id !== target.id);
+  }
+  if (host.table.loserIds !== undefined) {
+    host.table.loserIds = host.table.loserIds.filter((id) => id !== target.id);
+  }
+
+  // --- COMPLETE-PASS RE-CHECK (current-turn removal only): once the on-turn Player is gone, the removal may
+  // have left EVERY remaining alive seat already in `acted` (e.g. the removed Player was the last un-acted
+  // seat). The `turns → allActed` transition normally fires only inside the turn handlers — removal must
+  // drive it too, or the Round strands in `turns` (the host could re-take a turn and `revealAll`, gated on
+  // `allActed`, would be unreachable). maybeCompletePass reads the NOW-current roster, so it MUST run AFTER
+  // the splice. It also clears `currentTurnId` (covering the lone-alive-seat case where nextAliveSeat
+  // returned the removed seat's own id). A roster mutation IS a state change, so bump the phase token
+  // (double-tap safety) — UNLESS the pass just completed, which bumps the token itself (avoid a double-bump).
+  // Persist unconditionally (the roster is durable). [Review 2026-06-23; AR-5; maybeCompletePass.] ---
+  const passCompleted = removedCurrentTurn && round !== null && maybeCompletePass(host.table, round);
+  if (!passCompleted) bumpPhaseToken(host.table);
+  await persistSummary(host.storage, host.table);
+}
+
+/**
+ * handleHostReassign — the Host hands the conductor role to another Player (Story 4.2, FR-14, AR-5). Sets
+ * `table.hostId = target.id`: the new Host's projection gains `you.isHost` (the bar/sheet render for them),
+ * the former Host's loses it, and "exactly one Host at any time" holds BY CONSTRUCTION (hostId is a single
+ * field). An ELIMINATED Player CAN become Host (an eliminated Host keeps conducting — architecture.md:335-338),
+ * so the target is NOT gated on `isAlive`.
+ *
+ * GUARD ORDER (same as remove, NO phase gate — accepted at any phase): shape (phaseToken finite + playerId
+ * non-empty string → `phase-illegal`) → table-null (`phase-illegal`) → not-host (`not-host`) →
+ * checkPhaseToken (`stale-phase`) → target-exists / not-self (`phase-illegal`, reassign-to-self is a no-op).
+ * Bumps the phase token (a host change is a state change → double-tap safety) and persists (hostId is durable).
+ * [Source: epics.md#Story-4.2 AC-4.2.5; architecture.md 335-338.]
+ */
+export async function handleHostReassign(
+  host: TableHost,
+  intent: Extract<Intent, { type: "hostReassign" }>,
+  callerPlayerId: string | undefined,
+): Promise<void> {
+  // --- SHAPE GUARD (mirrors handleHostRemovePlayer). ---
+  if (
+    typeof intent.payload?.phaseToken !== "number" ||
+    !Number.isFinite(intent.payload.phaseToken) ||
+    typeof intent.payload?.playerId !== "string" ||
+    intent.payload.playerId.length === 0
+  ) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- table-null (defensive). ---
+  if (host.table === null) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- not-host (NFR-2): only the current Host may hand off the role. ---
+  if (callerPlayerId !== host.table.hostId) {
+    throw new IntentError("not-host");
+  }
+
+  // --- checkPhaseToken: stale/double-tap → `stale-phase`, BEFORE mutation. ---
+  checkPhaseToken(host.table, intent.payload.phaseToken);
+
+  // --- target must exist and must NOT already be the Host (reassign-to-self is a no-op → phase-illegal).
+  // An eliminated target IS allowed (eliminated host keeps conducting). ---
+  const target = host.table.players.find((p) => p.id === intent.payload.playerId);
+  if (target === undefined || target.id === host.table.hostId) {
+    throw new IntentError("phase-illegal");
+  }
+
+  // --- MUTATE + bump + persist: a single-field assignment keeps "exactly one Host". ---
+  host.table.hostId = target.id;
+  bumpPhaseToken(host.table);
   await persistSummary(host.storage, host.table);
 }
 

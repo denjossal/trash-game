@@ -1,21 +1,16 @@
-// Lobby.svelte.test.ts — the Lobby surface (Story 1.10, AC-1.10.2/.3/.4). Runs in "client-dom".
+// Lobby.svelte.test.ts — the Lobby surface (Story 1.10, AC-1.10.2/.3/.4; Story 4.2 stepper removal). Runs
+// in "client-dom".
 //
 // Behavior pinned:
 //   - Room Code rendered letter-by-letter (the most prominent element)
 //   - live roster: one row per player, each with Lives pips (filled = lives, hollow = spent)
 //   - numeral paired with pips for >= 4 Lives; not for < 4
-//   - HOST sees the Lives stepper (1..5) + the conductor bar; a NON-HOST sees neither
-//   - Deal is disabled at 1 player, enabled at >= 2 (MIN_PLAYERS)
-//   - changing the stepper sends hostSetLives via the session module (never socket.send here)
-// [Source: story Tasks 3/4; DESIGN.md Room Code / Lives / Conductor bar; epics.md#Story-1.10 AC2.]
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+//   - NO Lives stepper on Lobby anymore (Story 4.2 moved it into the ⚙ Host Controls sheet); neither Host
+//     nor non-Host sees a stepper or a Deal button on the Lobby surface itself.
+// [Source: story Tasks 3/4; DESIGN.md Room Code / Lives; epics.md#Story-1.10/4.2.]
+import { cleanup, render, screen, within } from "@testing-library/svelte";
+import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
-
-const sendHostSetLives = vi.fn();
-vi.mock("../lib/table-store.svelte", () => ({
-  sendHostSetLives: (...a: unknown[]) => sendHostSetLives(...a),
-}));
 
 import Lobby from "./Lobby.svelte";
 
@@ -38,7 +33,6 @@ function state(over: Partial<ProjectedTableState> = {}): ProjectedTableState {
 }
 
 afterEach(cleanup);
-beforeEach(() => sendHostSetLives.mockReset());
 
 describe("Lobby surface", () => {
   it("renders the Room Code letter by letter (the most prominent element)", () => {
@@ -75,7 +69,15 @@ describe("Lobby surface", () => {
     expect(within(row).getByTestId("lives-numeral").textContent).toContain("4");
   });
 
-  it("a NON-HOST sees neither the Lives stepper nor a Deal action", () => {
+  it("the Lobby no longer renders a Lives stepper for the HOST (moved to the ⚙ Host Controls sheet, Story 4.2)", () => {
+    render(Lobby, { props: { state: state() } });
+    // The stepper (and its decrease/increase controls) is gone from Lobby — it lives in HostControls now.
+    expect(screen.queryByLabelText(/lives stepper/i)).toBeNull();
+    expect(screen.queryByLabelText(/increase lives/i)).toBeNull();
+    expect(screen.queryByLabelText(/decrease lives/i)).toBeNull();
+  });
+
+  it("a NON-HOST sees neither a Lives stepper nor a Deal action on Lobby", () => {
     render(Lobby, {
       props: {
         state: state({
@@ -88,30 +90,9 @@ describe("Lobby surface", () => {
     expect(screen.queryByRole("button", { name: /deal/i })).toBeNull();
   });
 
-  it("a HOST sees the Lives stepper (the Deal action lives in the conductor bar, Story 4.1)", () => {
-    render(Lobby, { props: { state: state() } });
-    expect(screen.getByLabelText(/lives stepper/i)).toBeTruthy();
-  });
-
-  it("the Lobby surface itself no longer renders a Deal button (moved to ConductorBar in Story 4.1)", () => {
-    // The dead inline Deal placeholder (no-op onclick) was removed; the bar overlay owns the single Deal,
-    // and its disabled-until-≥2 behavior is pinned in ConductorBar.svelte.test.ts.
+  it("the Lobby surface itself renders no Deal button (the bar overlay owns the single Deal, Story 4.1)", () => {
     render(Lobby, { props: { state: state() } });
     expect(screen.queryByRole("button", { name: /deal/i })).toBeNull();
-  });
-
-  it("the Host stepper sends hostSetLives with the current phaseToken", async () => {
-    render(Lobby, { props: { state: state({ startingLives: 3, phaseToken: 0 }) } });
-    await fireEvent.click(screen.getByLabelText(/increase lives/i));
-    expect(sendHostSetLives).toHaveBeenCalledWith(4, 0);
-  });
-
-  it("the stepper clamps to 1..5 (no decrease below 1, no increase above 5)", async () => {
-    const { unmount } = render(Lobby, { props: { state: state({ startingLives: 1 }) } });
-    expect((screen.getByLabelText(/decrease lives/i) as HTMLButtonElement).disabled).toBe(true);
-    unmount();
-    render(Lobby, { props: { state: state({ startingLives: 5 }) } });
-    expect((screen.getByLabelText(/increase lives/i) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("the non-Host waiting hint falls back to 'the host' when the host isn't in the roster", () => {
