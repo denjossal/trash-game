@@ -15,6 +15,7 @@ import {
   applyDraw,
   applyKeep,
   applySwap,
+  compositionFor,
   dealRound,
   isLastPlayer,
   nextAliveSeat,
@@ -22,11 +23,6 @@ import {
 } from "./rules/engine.js";
 import { assertDealable, bumpPhaseToken, bumpTurnToken, checkPhaseToken, checkTurnToken } from "./rules/validate.js";
 import { cryptoRng } from "./rng.js";
-
-/** Single-deck composition for the Epic 2 case (≤20 players all fit one 52-card deck). The
- *  playerCount→deck-count mapping (two merged decks at 11–20) is Story 5.1 — supplied, not assumed
- *  (Decision #8). */
-const DEAL_COMPOSITION = { decks: 1 } as const;
 
 /**
  * What a handler needs from the DO. Kept as a narrow interface so handlers.ts does not import
@@ -531,15 +527,19 @@ export async function handleDeal(
     throw new IntentError("phase-illegal");
   }
 
+  // --- AUTO DECK SCALING (Story 5.1, FR-13): 1 deck ≤10 alive seats, 2 merged decks 11–20. Computed
+  // once and passed to BOTH the guard and the deal so they validate exactly what is dealt. ---
+  const composition = compositionFor(aliveCount);
+
   // --- deck-input field validation 2.1 deferred (assertDealable — #8/#9): the composition must be a
   // finite positive-integer deck count that covers the table. ---
-  assertDealable(aliveCount, DEAL_COMPOSITION);
+  assertDealable(aliveCount, composition);
 
   // --- MUTATE: first-Round Starting Player = Host (AC-2.3.3); build the in-flight round (deal one card
   // per alive seat, deterministic-seeded by the crypto rng); advance straight to "turns". The cryptoRng
   // seam lives outside rules/ (rng.ts) — the handler injects entropy into the pure dealRound. ---
   const startingPlayerId = table.hostId;
-  table.round = dealRound(table.players, DEAL_COMPOSITION, cryptoRng(), startingPlayerId);
+  table.round = dealRound(table.players, composition, cryptoRng(), startingPlayerId);
   table.phase = "turns";
 
   // --- BUMP (accepted path): advance the phase token so the next stale `deal` copy mismatches. Kept
@@ -701,7 +701,22 @@ export async function handleDealAgain(
     throw new Error("handleDealAgain: roundResult has no nextStartingPlayerId (resolution/persist invariant breach)");
   }
   const startingPlayerId = table.nextStartingPlayerId;
-  table.round = dealRound(table.players, DEAL_COMPOSITION, cryptoRng(), startingPlayerId);
+  // --- AUTO DECK SCALING (Story 5.1, FR-13): recompute from the CURRENT alive count — the roster only
+  // shrinks between rounds, so the deck count can correctly DROP (e.g. 11 alive ⇒ 2 decks → one
+  // eliminated ⇒ 10 alive ⇒ 1 deck next re-deal). assertDealable added for symmetry with handleDeal
+  // (the shrinking roster keeps a once-dealable table dealable; the explicit guard makes that honest). ---
+  const aliveCount = table.players.filter((p) => p.isAlive).length;
+  // --- ≥2-ALIVE FLOOR (mirror of handleDeal's MIN_PLAYERS gate): the `roundResult` phase gate is the
+  // win-check's ≥2-alive guarantee ONLY for an UNTOUCHED roster — Story-4.2 host removal mutates the
+  // roster at any phase (no phase gate, no floor of its own — it defers to "the next Deal/Re-deal
+  // handles it"), so a removal at roundResult can leave <2 alive. assertDealable below validates
+  // deck-cover, NOT the floor, so without this a 1-alive Re-deal would start a degenerate solo round. ---
+  if (aliveCount < MIN_PLAYERS) {
+    throw new IntentError("phase-illegal");
+  }
+  const composition = compositionFor(aliveCount);
+  assertDealable(aliveCount, composition);
+  table.round = dealRound(table.players, composition, cryptoRng(), startingPlayerId);
   table.phase = "turns";
   table.loserIds = undefined; // clear the between-round result (a new round has no result yet).
   table.winnerIds = undefined;

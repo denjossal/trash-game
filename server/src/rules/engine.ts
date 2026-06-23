@@ -1,7 +1,7 @@
 // PURE rule engine. Imports ONLY @trash/shared; no transport/storage/crypto/Date/Math.random.
 // Enforced by the GATE 2 ESLint purity denylist on server/src/rules/**.
 // [Source: architecture.md#D5, lines 405–418, 686–691; eslint.config.js GATE 2]
-import type { Card, Player, Round } from "@trash/shared";
+import { SINGLE_DECK_MAX_PLAYERS, type Card, type Player, type Round } from "@trash/shared";
 
 /**
  * The outcome of {@link resolveShowdown} (Story 3.1). PURE data — the caller (Story 3.4 handler) owns
@@ -38,6 +38,21 @@ export type DeckComposition = { decks: number };
  * tests pass a fixed-seed PRNG. [AC-2.1.2 / AC-2.1.3]
  */
 export type Rng = () => number;
+
+/**
+ * Auto-scale the Deck to the Table size (Story 5.1, FR-13 / AR-9). PURE: a Player count maps to the
+ * {@link DeckComposition} {@link dealRound}/{@link buildDeck} consume — ONE 52-card deck for ≤
+ * {@link SINGLE_DECK_MAX_PLAYERS} (10) Players, TWO merged decks (104 cards) for 11–20. This is the
+ * whole of FR-13's logic: the count is engine-internal (Decision #8 — never sent over the wire), and
+ * the Loser computation at scale is already proven across 2..20 (Decision #7 — {@link resolveShowdown}
+ * is NOT reopened here). Two decks introduce duplicate VALUES (and more frequent ties), which are
+ * ACCEPTED by design (FR-10/FR-13). Keys on the shared `SINGLE_DECK_MAX_PLAYERS` constant — no hardcoded
+ * literal. The caller passes the ALIVE seat count; `joinRoom` bounds the Table at MAX_PLAYERS (20), so a
+ * count above the single-deck threshold is always 11–20. [Source: epics.md FR-13/AR-9; config.ts:6.]
+ */
+export function compositionFor(playerCount: number): DeckComposition {
+  return { decks: playerCount <= SINGLE_DECK_MAX_PLAYERS ? 1 : 2 };
+}
 
 /**
  * Build a deck from the SUPPLIED composition (AC-2.1.1). Pure: same composition in → equal

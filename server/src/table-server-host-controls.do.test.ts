@@ -317,6 +317,24 @@ test("AC-4.2.3 (happy): a Host removes a Player at roundResult → the seat leav
   for (const g of guests) g.close();
 });
 
+test("dealAgain floor: removing seats below MIN_PLAYERS at roundResult makes the Re-deal phase-illegal (no degenerate solo round)", async () => {
+  // Regression (code-review 5.1): handleHostRemovePlayer has no phase gate / floor and the roundResult
+  // gate's ≥2-alive guarantee only holds for an UNTOUCHED roster — so removal can drop the table below
+  // MIN_PLAYERS at roundResult. handleDealAgain must enforce the floor itself (assertDealable only checks
+  // deck-cover, which a 1-alive {decks:1} composition passes). Remove BOTH guests → host alone (1 alive),
+  // then a Re-deal must be refused rather than dealing a 1-player round.
+  const { host, guests, result, p1Id, p2Id } = await driveToRoundResult("RDFLOOR");
+  host.send({ type: "hostRemovePlayer", payload: { phaseToken: result.phaseToken, playerId: p1Id } });
+  const afterFirst = await nextRosterSize(host, 2);
+  host.send({ type: "hostRemovePlayer", payload: { phaseToken: afterFirst.phaseToken, playerId: p2Id } });
+  const afterSecond = await nextRosterSize(host, 1); // host alone, still roundResult
+
+  host.send({ type: "dealAgain", payload: { phaseToken: afterSecond.phaseToken } });
+  expect(await nextErrorReason(host)).toBe("phase-illegal");
+  host.close();
+  for (const g of guests) g.close();
+});
+
 test("AC-4.2.4 (mid-Round, current turn): removing the current-turn Player advances the turn + adds them to acted", async () => {
   const { host, created, guests } = await lobbyOf("RMTURN", 3);
   const { hostDealt, guestDealt } = await deal(host, created, guests);

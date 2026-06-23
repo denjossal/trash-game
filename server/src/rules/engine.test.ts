@@ -1,11 +1,13 @@
 import { expect, test } from "vitest";
 import type { Card, Player, Round } from "@trash/shared";
+import { SINGLE_DECK_MAX_PLAYERS } from "@trash/shared";
 import {
   allAlivePlayersActed,
   applyDraw,
   applyKeep,
   applySwap,
   buildDeck,
+  compositionFor,
   dealRound,
   isLastPlayer,
   nextAliveSeat,
@@ -62,6 +64,29 @@ test("buildDeck: is pure — successive calls return equal (but distinct) decks"
   const b = buildDeck({ decks: 1 });
   expect(a).toEqual(b);
   expect(a).not.toBe(b); // new array each call, no shared mutable state
+});
+
+// ---- compositionFor (AC-5.1.1 — auto deck scaling, FR-13) ------------------
+
+test("compositionFor: ≤10 players → 1 deck", () => {
+  for (const n of [2, 5, 9, 10]) {
+    expect(compositionFor(n)).toEqual({ decks: 1 });
+  }
+});
+
+test("compositionFor: 11–20 players → 2 merged decks", () => {
+  for (const n of [11, 15, 20]) {
+    expect(compositionFor(n)).toEqual({ decks: 2 });
+  }
+});
+
+test("compositionFor: the seam is at SINGLE_DECK_MAX_PLAYERS exactly (10 → 1 deck, 11 → 2 decks)", () => {
+  expect(compositionFor(SINGLE_DECK_MAX_PLAYERS)).toEqual({ decks: 1 });
+  expect(compositionFor(SINGLE_DECK_MAX_PLAYERS + 1)).toEqual({ decks: 2 });
+});
+
+test("compositionFor: is pure — same input → same output", () => {
+  expect(compositionFor(11)).toEqual(compositionFor(11));
 });
 
 // ---- shuffle (AC-2.1.2) ---------------------------------------------------
