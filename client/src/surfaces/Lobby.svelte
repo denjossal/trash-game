@@ -1,21 +1,16 @@
 <script lang="ts">
   // Lobby.svelte — the Lobby surface (Story 1.10, UX-DR4/UX-DR15). Routed when phase === "lobby".
   //
-  // Shows the Room Code large + letter-spaced (the most prominent element), the live roster with Lives
-  // pips, and — for the Host only — a Lives stepper (1..5, default 3). A non-Host sees no control. All copy
-  // comes from copy.ts.
+  // Shows the Room Code large + letter-spaced (the most prominent element) and the live roster with Lives
+  // pips. A non-Host sees a "waiting for the host" hint. All copy comes from copy.ts.
   //
   // The Deal action lives in the shared conductor bar (Story 4.1, ConductorBar.svelte), mounted as an
-  // overlay by App.svelte — NOT inline here. (Story 1.10 shipped a disabled-until-≥2 Deal placeholder in a
-  // bottom conductor div with a no-op onclick; Story 4.1 removed it so there is exactly ONE Deal button —
-  // the bar's — wired to sendDeal.) The Lives stepper STAYS on Lobby this story; Story 4.2 moves Lives into
-  // the ⚙ Host Controls sheet. The Host's Lives change goes out via sendHostSetLives (GATE-1: never
-  // socket.send from a surface).
+  // overlay by App.svelte — NOT inline here. The Lives stepper ALSO moved off Lobby in Story 4.2 into the
+  // ⚙ Host Controls sheet (the sole home for the three FR-14 controls — Lives / remove / reassign), per
+  // DESIGN.md:186. So Lobby is now Host-control-free: just the code + roster + the non-Host waiting hint.
   import type { ProjectedTableState } from "@trash/shared";
-  import { MAX_LIVES, MIN_LIVES } from "@trash/shared";
   import LivesPips from "../components/LivesPips.svelte";
   import { roomCode, waitingForHost } from "../lib/copy";
-  import { sendHostSetLives } from "../lib/table-store.svelte";
 
   const { state }: { state: ProjectedTableState } = $props();
 
@@ -25,12 +20,6 @@
   // Fall back to "the host" if the host isn't in the roster yet (or has an empty name) so the waiting
   // hint never renders a double-space / nameless sentence.
   const hostName = $derived(players.find((p) => p.id === state.hostId)?.name || "the host");
-
-  function setLives(next: number): void {
-    const clamped = Math.max(MIN_LIVES, Math.min(MAX_LIVES, next));
-    if (clamped === state.startingLives) return; // value follows the server echo; no-op if unchanged.
-    sendHostSetLives(clamped, state.phaseToken);
-  }
 </script>
 
 <main class="surface">
@@ -54,24 +43,6 @@
 
   {#if !isHost}
     <p class="hint">{waitingForHost(hostName)}</p>
-  {/if}
-
-  {#if isHost}
-    <!-- Host Lives stepper (1..5). The Deal primary lives in the shared conductor bar overlay (Story 4.1),
-         not here. Story 4.2 moves this stepper into the ⚙ Host Controls sheet. -->
-    <div class="stepper" aria-label="Lives stepper">
-      <button
-        class="step"
-        aria-label="Decrease lives"
-        disabled={state.startingLives <= MIN_LIVES}
-        onclick={() => setLives(state.startingLives - 1)}>−</button>
-      <span class="lives-value" aria-label="Starting lives">{state.startingLives}</span>
-      <button
-        class="step"
-        aria-label="Increase lives"
-        disabled={state.startingLives >= MAX_LIVES}
-        onclick={() => setLives(state.startingLives + 1)}>+</button>
-    </div>
   {/if}
 </main>
 
@@ -146,41 +117,5 @@
     font-size: var(--type-body-lg-size);
     text-align: center;
     margin: 0;
-  }
-  .stepper {
-    margin-top: auto; /* sit toward the bottom of the body, above the fixed conductor bar. */
-    display: flex;
-    align-items: center;
-    gap: var(--space-stack-sm);
-    padding: 0 var(--space-stack-sm);
-    background: var(--color-surface-container-high);
-    border-radius: var(--radius-full);
-  }
-  .step {
-    width: 48px;
-    height: 48px; /* >= 48dp */
-    border: none;
-    border-radius: var(--radius-full);
-    background: var(--color-surface-container-highest);
-    color: var(--color-on-surface);
-    font-family: var(--font-family-display);
-    font-size: var(--type-headline-lg-mobile-size);
-    cursor: pointer;
-  }
-  .step:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-  .step:focus-visible {
-    outline: var(--stroke-active);
-    outline-offset: 2px;
-  }
-  .lives-value {
-    min-width: 1.5rem;
-    text-align: center;
-    font-family: var(--font-family-display);
-    font-size: var(--type-headline-lg-mobile-size);
-    font-weight: var(--type-headline-lg-mobile-weight);
-    color: var(--color-secondary-container);
   }
 </style>

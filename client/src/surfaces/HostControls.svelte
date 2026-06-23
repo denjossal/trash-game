@@ -1,25 +1,68 @@
 <script lang="ts">
-  // HostControls.svelte — the one-level Host Controls modal sheet (Story 4.1, UX-DR13 / NFR-9 / NFR-10).
+  // HostControls.svelte — the one-level Host Controls modal sheet (Story 4.1 shell + Story 4.2 controls,
+  // UX-DR13 / NFR-9 / NFR-10).
   //
   // NOT a routed surface — an OVERLAY the conductor bar (ConductorBar.svelte) opens on top of the non-turn
   // surface beneath (Lobby / Waiting / Round Result), never reachable from Your Turn. routeFromState does
   // NOT return it. It is a SINGLE level — one sheet, never stacked two deep (the bar owns a single `open`
   // boolean) — rendered on `surface-container-high`, closing back to the surface beneath.
   //
-  // SCOPE (Story 4.1): the SHELL only — open/close, focus management, Escape, the heading. The three FR-14
-  // controls it will hold (the Lives stepper, remove a Player, reassign Host) are Story 4.2 (which also
-  // settles the open product decision M1: hostSetLives clamp-vs-top-up). Eyes-Up (G1/NFR-9): this overlay
-  // holds ONLY the (future) phase-appropriate controls — NO turn timer, NO activity/event log, NO
-  // player-status dashboard, NO ambient/idle content.
+  // SCOPE: holds the three FR-14 Host controls (Story 4.2) — the Lives stepper (1–5; the server applies M1
+  // "set ongoing, never revive"), the roster with an error-tinted remove-with-confirm per Player, and the
+  // "make someone else host" reassign picker. Eyes-Up (G1/NFR-9): ONLY these three controls + the heading +
+  // close — NO turn timer, NO activity/event log, NO player-status dashboard, NO ambient/idle content.
+  //
+  // All sends go through the GATE-1-exempt table-store seams (never socket.send from a surface); the server
+  // echo re-projects (the displayed Lives, the roster, the host badge follow the next tableState). Stale /
+  // refused copies are swallowed silently (Story 2.2) — NO optimistic local state, NO error toast.
   import type { ProjectedTableState } from "@trash/shared";
-  import { HOST_CONTROLS } from "../lib/copy";
+  import { MAX_LIVES, MIN_LIVES } from "@trash/shared";
+  import LivesPips from "../components/LivesPips.svelte";
+  import {
+    HOST_CONTROLS,
+    LIVES,
+    MAKE_HOST,
+    PLAYERS,
+    REASSIGN_HOST,
+    REMOVE,
+    confirmRemove,
+  } from "../lib/copy";
+  import { sendHostRemovePlayer, sendHostReassign, sendHostSetLives } from "../lib/table-store.svelte";
 
   // Alias the prop to `tableState` internally: a binding named `state` collides with the `$state` rune
   // token (Svelte parses `$state` as auto-subscription to a `state` store). The external prop stays `state`
-  // (the bar passes `state={tableState}`). The roster/Lives these controls act on arrive in Story 4.2 — the
-  // prop is in the contract now; `seatCount` is a trivial read so the prop isn't flagged unused before 4.2.
+  // (the bar passes `state={tableState}`).
   const { state: tableState, onclose }: { state: ProjectedTableState; onclose: () => void } = $props();
-  const seatCount = $derived(tableState.players.length);
+
+  // Roster sorted by seat (stable order). The Host's own row shows no remove affordance (self-remove is
+  // forbidden — reassign first); every other Player can be removed or made host.
+  const players = $derived([...tableState.players].sort((a, b) => a.seatIndex - b.seatIndex));
+  const others = $derived(players.filter((p) => p.id !== tableState.hostId));
+
+  // The id pending a remove confirm (a two-step affordance: Remove → Confirm). UI-only local state — the
+  // overlay's transient interaction, not a server-held screen (the no-client-screen rule is about the
+  // ROUTED surface deriving from server state). Reset whenever the sheet's roster identity could shift.
+  let pendingRemoveId = $state<string | null>(null);
+
+  function setLives(next: number): void {
+    const clamped = Math.max(MIN_LIVES, Math.min(MAX_LIVES, next));
+    if (clamped === tableState.startingLives) return; // value follows the server echo; no-op if unchanged.
+    sendHostSetLives(clamped, tableState.phaseToken);
+  }
+
+  function askRemove(id: string): void {
+    pendingRemoveId = id;
+  }
+  function confirmRemoveNow(id: string): void {
+    pendingRemoveId = null;
+    sendHostRemovePlayer(id, tableState.phaseToken);
+  }
+  function cancelRemove(): void {
+    pendingRemoveId = null;
+  }
+  function makeHost(id: string): void {
+    sendHostReassign(id, tableState.phaseToken);
+  }
 
   let sheetEl = $state<HTMLDivElement | null>(null);
 
@@ -79,9 +122,76 @@
       <h2>{HOST_CONTROLS}</h2>
       <button class="icon-button close" type="button" aria-label="Close host controls" onclick={onclose}>✕</button>
     </header>
-    <!-- The three FR-14 controls (Lives stepper, remove Player, reassign Host) land in Story 4.2. This is
-         the shell that holds them. (seatCount is a benign read so the `state` prop isn't unused pre-4.2.) -->
-    <p class="placeholder">{seatCount} at the table. More controls coming soon.</p>
+
+    <!-- 1) Lives stepper (1..5). Moved here from the Lobby in Story 4.2 — the ⚙ sheet is the sole home. The
+            server applies M1 ("set ongoing, never revive"): a raise tops up alive Players, a lower clamps
+            them, an eliminated seat is never revived. -->
+    <section class="control" aria-labelledby="hc-lives">
+      <h3 id="hc-lives">{LIVES}</h3>
+      <div class="stepper" aria-label="Lives stepper">
+        <button
+          class="step"
+          aria-label="Decrease lives"
+          disabled={tableState.startingLives <= MIN_LIVES}
+          onclick={() => setLives(tableState.startingLives - 1)}>−</button>
+        <span class="lives-value" aria-label="Starting lives">{tableState.startingLives}</span>
+        <button
+          class="step"
+          aria-label="Increase lives"
+          disabled={tableState.startingLives >= MAX_LIVES}
+          onclick={() => setLives(tableState.startingLives + 1)}>+</button>
+      </div>
+    </section>
+
+    <!-- 2) Roster with an error-tinted remove-with-confirm per Player (never the Host's own row). The remove
+            affordance is a two-step: Remove → Confirm {name}? — guarding against an accidental tap. The error
+            tint is paired with the "Remove"/"Remove {name}?" label so it never relies on color alone. -->
+    <section class="control" aria-labelledby="hc-players">
+      <h3 id="hc-players">{PLAYERS}</h3>
+      <ul class="roster">
+        {#each players as p (p.id)}
+          <li class="row" class:disconnected={!p.isConnected}>
+            <span class="name">{p.name}</span>
+            <LivesPips lives={p.lives} startingLives={tableState.startingLives} />
+            {#if p.id !== tableState.hostId}
+              {#if pendingRemoveId === p.id}
+                <span class="confirm">
+                  <button class="danger confirm-yes" type="button" onclick={() => confirmRemoveNow(p.id)}
+                    >{confirmRemove(p.name)}</button>
+                  <button class="cancel" type="button" aria-label="Cancel remove" onclick={cancelRemove}>✕</button>
+                </span>
+              {:else}
+                <button
+                  class="danger"
+                  type="button"
+                  aria-label={`Remove ${p.name}`}
+                  onclick={() => askRemove(p.id)}>{REMOVE}</button>
+              {/if}
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    </section>
+
+    <!-- 3) Reassign host — "make someone else host". Lists every OTHER Player (an eliminated Player is a
+            legal target — an eliminated Host keeps conducting). One tap hands off the conductor role. -->
+    {#if others.length > 0}
+      <section class="control" aria-labelledby="hc-reassign">
+        <h3 id="hc-reassign">{REASSIGN_HOST}</h3>
+        <ul class="roster">
+          {#each others as p (p.id)}
+            <li class="row">
+              <span class="name">{p.name}</span>
+              <button
+                class="make-host"
+                type="button"
+                aria-label={`Make ${p.name} host`}
+                onclick={() => makeHost(p.id)}>{MAKE_HOST}</button>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
   </div>
 </div>
 
@@ -126,9 +236,134 @@
   .close {
     font-size: 1.25rem;
   }
-  .placeholder {
-    margin: var(--space-stack-md) 0 0;
-    color: var(--color-on-surface-variant);
+
+  /* --- The three FR-14 controls (Story 4.2). Each is a labelled section; the sheet stays short (no scroll
+         of ambient content — Eyes-Up). --- */
+  .control {
+    margin-top: var(--space-stack-md);
+  }
+  h3 {
+    font-family: var(--font-family-display);
     font-size: var(--type-body-lg-size);
+    font-weight: var(--type-body-lg-weight);
+    margin: 0 0 var(--space-stack-sm);
+    color: var(--color-on-surface-variant);
+  }
+
+  /* Lives stepper — same shape as the (now-removed) Lobby stepper, moved here in Story 4.2. */
+  .stepper {
+    display: flex;
+    align-items: center;
+    gap: var(--space-stack-sm);
+    padding: 0 var(--space-stack-sm);
+    background: var(--color-surface-container-highest);
+    border-radius: var(--radius-full);
+    width: fit-content;
+  }
+  .step {
+    width: 48px;
+    height: 48px; /* >= 48dp */
+    border: none;
+    border-radius: var(--radius-full);
+    background: var(--color-surface-container-high);
+    color: var(--color-on-surface);
+    font-family: var(--font-family-display);
+    font-size: var(--type-headline-lg-mobile-size);
+    cursor: pointer;
+  }
+  .step:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .step:focus-visible {
+    outline: var(--stroke-active);
+    outline-offset: 2px;
+  }
+  .lives-value {
+    min-width: 1.5rem;
+    text-align: center;
+    font-family: var(--font-family-display);
+    font-size: var(--type-headline-lg-mobile-size);
+    font-weight: var(--type-headline-lg-mobile-weight);
+    color: var(--color-secondary-container);
+  }
+
+  /* Roster rows (shared by the remove + reassign lists). */
+  .roster {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-stack-sm);
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-stack-sm);
+    min-height: 56px;
+    padding: 0 var(--space-gutter);
+    background: var(--color-surface-container);
+    border-radius: var(--radius-md);
+  }
+  .name {
+    flex: 1;
+    font-size: var(--type-body-lg-size);
+    color: var(--color-on-surface);
+  }
+  /* A disconnected-but-present Player reads dimmed (AR-15 state pattern) — the Host conducts around them. */
+  .row.disconnected .name {
+    opacity: 0.55;
+  }
+
+  /* Error-tinted remove affordance (DESIGN.md:186). Never color alone — the label ("Remove" / "Remove
+     {name}?") carries the meaning; the error ramp + a border reinforce it. ≥48dp. */
+  .danger {
+    min-height: 48px;
+    padding: 0 var(--space-gutter);
+    border: 1px solid var(--color-error);
+    border-radius: var(--radius-md);
+    background: var(--color-error-container);
+    color: var(--color-on-error-container);
+    font-size: var(--type-body-lg-size);
+    cursor: pointer;
+  }
+  .danger:focus-visible {
+    outline: var(--stroke-active);
+    outline-offset: 2px;
+  }
+  .confirm {
+    display: flex;
+    align-items: center;
+    gap: var(--space-stack-sm);
+  }
+  .cancel {
+    min-width: 48px;
+    min-height: 48px;
+    border: 1px solid var(--color-outline);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--color-on-surface);
+    cursor: pointer;
+  }
+  .cancel:focus-visible {
+    outline: var(--stroke-active);
+    outline-offset: 2px;
+  }
+
+  /* Reassign — a calm secondary action (not destructive). ≥48dp. */
+  .make-host {
+    min-height: 48px;
+    padding: 0 var(--space-gutter);
+    border: 1px solid var(--color-outline);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-container-highest);
+    color: var(--color-on-surface);
+    font-size: var(--type-body-lg-size);
+    cursor: pointer;
+  }
+  .make-host:focus-visible {
+    outline: var(--stroke-active);
+    outline-offset: 2px;
   }
 </style>

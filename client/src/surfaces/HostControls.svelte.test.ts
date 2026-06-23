@@ -1,30 +1,44 @@
-// HostControls.svelte.test.ts — the one-level Host Controls modal sheet SHELL (Story 4.1, AC-4.1.6/.7/.8).
-// Runs in "client-dom".
+// HostControls.svelte.test.ts — the one-level Host Controls modal sheet: the shell (Story 4.1) + the three
+// FR-14 controls (Story 4.2). Runs in "client-dom".
 //
 // Pins:
-//   - it is a dialog with the HOST_CONTROLS heading/label (AC-4.1.6).
-//   - it has a close affordance that calls the onclose callback; Escape also closes (AC-4.1.6).
-//   - it is a SHELL this story: the three FR-14 controls (Lives stepper, remove player, reassign host) are
-//     Story 4.2 — they must NOT be present yet (AC-4.1.7 / scope).
-//   - Eyes-Up (AC-4.1.7): no timer/log/dashboard/ambient content.
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
-import { afterEach, describe, expect, it, vi } from "vitest";
+//   - it is a dialog with the HOST_CONTROLS heading/label; a close affordance + Escape close it; Tab is
+//     trapped inside the sheet (shell — Story 4.1, AC-4.1.6).
+//   - Lives stepper (AC-4.2.1): present + clamps 1..5 + sends sendHostSetLives(value, phaseToken).
+//   - Remove (AC-4.2.3): an error-tinted remove per Player EXCEPT the Host's own row; a two-step confirm,
+//     then sendHostRemovePlayer(id, phaseToken). A disconnected Player's row is dimmed (AR-15).
+//   - Reassign (AC-4.2.5): a "make host" action per OTHER Player (excludes the Host) → sendHostReassign.
+//   - Eyes-Up (AC-4.2.8): no timer/log/dashboard/ambient content.
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
+
+const sendHostSetLives = vi.fn();
+const sendHostRemovePlayer = vi.fn();
+const sendHostReassign = vi.fn();
+vi.mock("../lib/table-store.svelte", () => ({
+  sendHostSetLives: (...a: unknown[]) => sendHostSetLives(...a),
+  sendHostRemovePlayer: (...a: unknown[]) => sendHostRemovePlayer(...a),
+  sendHostReassign: (...a: unknown[]) => sendHostReassign(...a),
+}));
+
 import { HOST_CONTROLS } from "../lib/copy";
 import HostControls from "./HostControls.svelte";
 
-afterEach(cleanup);
+function player(id: string, name: string, over: Partial<ProjectedTableState["players"][number]> = {}) {
+  return { id, name, lives: 3, isAlive: true, isConnected: true, seatIndex: 0, ...over };
+}
 
 function state(over: Partial<ProjectedTableState> = {}): ProjectedTableState {
   return {
     code: "CND1",
-    phase: "lobby",
+    phase: "roundResult",
     hostId: "me",
     startingLives: 3,
     you: { playerId: "me", isHost: true, isAlive: true, isConnected: true, isLastPlayer: false },
     players: [
-      { id: "me", name: "Mar", lives: 3, isAlive: true, isConnected: true, seatIndex: 0 },
-      { id: "p2", name: "Beto", lives: 3, isAlive: true, isConnected: true, seatIndex: 1 },
+      player("me", "Mar", { seatIndex: 0 }),
+      player("p2", "Beto", { seatIndex: 1 }),
     ],
     phaseToken: 7,
     revealed: false,
@@ -32,48 +46,126 @@ function state(over: Partial<ProjectedTableState> = {}): ProjectedTableState {
   };
 }
 
-describe("HostControls sheet shell", () => {
-  it("renders a dialog with the Host controls heading (AC-4.1.6)", () => {
+afterEach(cleanup);
+beforeEach(() => {
+  sendHostSetLives.mockReset();
+  sendHostRemovePlayer.mockReset();
+  sendHostReassign.mockReset();
+});
+
+describe("HostControls sheet — shell (Story 4.1)", () => {
+  it("renders a dialog with the Host controls heading", () => {
     render(HostControls, { props: { state: state(), onclose: vi.fn() } });
     expect(screen.getByRole("dialog")).not.toBeNull();
     expect(screen.getAllByText(HOST_CONTROLS).length).toBeGreaterThan(0);
   });
 
-  it("the close affordance calls onclose (AC-4.1.6)", async () => {
+  it("the close affordance calls onclose", async () => {
     const onclose = vi.fn();
     render(HostControls, { props: { state: state(), onclose } });
-    await fireEvent.click(screen.getByRole("button", { name: /close/i }));
+    await fireEvent.click(screen.getByRole("button", { name: /close host controls/i }));
     expect(onclose).toHaveBeenCalledOnce();
   });
 
-  it("Escape closes the sheet (AC-4.1.6)", async () => {
+  it("Escape closes the sheet", async () => {
     const onclose = vi.fn();
     render(HostControls, { props: { state: state(), onclose } });
     await fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(onclose).toHaveBeenCalledOnce();
   });
 
-  it("traps Tab focus inside the sheet — Tab from the last control wraps, never escaping to the bar (AC-4.1.6)", async () => {
+  it("traps Tab focus inside the sheet (never escaping to the bar)", async () => {
     render(HostControls, { props: { state: state(), onclose: vi.fn() } });
     const dialog = screen.getByRole("dialog");
-    const close = screen.getByRole("button", { name: /close/i });
-    // The close button is the only (and therefore last) tabbable control in the 4.1 shell. Focus it, then
-    // Tab: the trap must keep focus in the sheet (wrap to the first control) rather than escape to the
-    // conductor bar behind the scrim.
-    close.focus();
+    // Focus the last tabbable control, then Tab — the trap keeps focus in the sheet.
+    const buttons = within(dialog).getAllByRole("button");
+    buttons[buttons.length - 1].focus();
     await fireEvent.keyDown(dialog, { key: "Tab" });
     expect(dialog.contains(document.activeElement)).toBe(true);
   });
+});
 
-  it("is a SHELL — the three FR-14 controls are NOT present yet (Story 4.2 scope)", () => {
-    const { container } = render(HostControls, { props: { state: state(), onclose: vi.fn() } });
-    // No Lives stepper, no remove affordance, no reassign-host action in the 4.1 shell.
-    expect(container.querySelector("[aria-label='Lives stepper']")).toBeNull();
-    expect(screen.queryByText(/remove/i)).toBeNull();
-    expect(screen.queryByText(/make .*host/i)).toBeNull();
+describe("HostControls — Lives stepper (Story 4.2, AC-4.2.1)", () => {
+  it("renders the Lives stepper and sends hostSetLives with the current phaseToken", async () => {
+    render(HostControls, { props: { state: state({ startingLives: 3, phaseToken: 7 }), onclose: vi.fn() } });
+    expect(screen.getByLabelText(/lives stepper/i)).toBeTruthy();
+    await fireEvent.click(screen.getByLabelText(/increase lives/i));
+    expect(sendHostSetLives).toHaveBeenCalledWith(4, 7);
   });
 
-  it("holds no attention-sink content (Eyes-Up, AC-4.1.7)", () => {
+  it("clamps the stepper to 1..5", () => {
+    const { unmount } = render(HostControls, { props: { state: state({ startingLives: 1 }), onclose: vi.fn() } });
+    expect((screen.getByLabelText(/decrease lives/i) as HTMLButtonElement).disabled).toBe(true);
+    unmount();
+    render(HostControls, { props: { state: state({ startingLives: 5 }), onclose: vi.fn() } });
+    expect((screen.getByLabelText(/increase lives/i) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("HostControls — remove a Player (Story 4.2, AC-4.2.3)", () => {
+  it("shows a remove affordance for every Player EXCEPT the Host's own row", () => {
+    render(HostControls, { props: { state: state(), onclose: vi.fn() } });
+    // p2 (Beto) is removable; the Host (Mar/me) is not.
+    expect(screen.getByRole("button", { name: /remove beto/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /remove mar/i })).toBeNull();
+  });
+
+  it("requires a confirm step, then sends hostRemovePlayer(id, phaseToken)", async () => {
+    render(HostControls, { props: { state: state({ phaseToken: 7 }), onclose: vi.fn() } });
+    // First tap: ask. No send yet.
+    await fireEvent.click(screen.getByRole("button", { name: /remove beto/i }));
+    expect(sendHostRemovePlayer).not.toHaveBeenCalled();
+    // The confirm prompt names the Player; tapping it sends.
+    await fireEvent.click(screen.getByText(/remove beto\?/i));
+    expect(sendHostRemovePlayer).toHaveBeenCalledWith("p2", 7);
+  });
+
+  it("dims a disconnected Player's row in the roster (AR-15)", () => {
+    render(HostControls, {
+      props: {
+        state: state({
+          players: [player("me", "Mar", { seatIndex: 0 }), player("p2", "Beto", { seatIndex: 1, isConnected: false })],
+        }),
+        onclose: vi.fn(),
+      },
+    });
+    // "Beto" appears in both the Players roster (removable) and the reassign list; the dimmed `disconnected`
+    // class is on the Players-roster row (the one that also holds the remove affordance).
+    const removeBtn = screen.getByRole("button", { name: /remove beto/i });
+    const row = removeBtn.closest("li")!;
+    expect(row.className).toMatch(/disconnected/);
+  });
+});
+
+describe("HostControls — reassign host (Story 4.2, AC-4.2.5)", () => {
+  it("offers 'make host' for every OTHER Player (never the Host) and sends hostReassign", async () => {
+    render(HostControls, { props: { state: state({ phaseToken: 7 }), onclose: vi.fn() } });
+    // p2 can be made host; the Host (me) has no make-host action.
+    expect(screen.getByRole("button", { name: /make beto host/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /make mar host/i })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: /make beto host/i }));
+    expect(sendHostReassign).toHaveBeenCalledWith("p2", 7);
+  });
+
+  it("allows reassigning to an ELIMINATED Player (an eliminated host keeps conducting)", () => {
+    render(HostControls, {
+      props: {
+        state: state({
+          players: [
+            player("me", "Mar", { seatIndex: 0 }),
+            player("p2", "Beto", { seatIndex: 1, isAlive: false, lives: 0 }),
+          ],
+        }),
+        onclose: vi.fn(),
+      },
+    });
+    // The eliminated Player still appears as a reassign target.
+    expect(screen.getByRole("button", { name: /make beto host/i })).toBeTruthy();
+  });
+});
+
+describe("HostControls — Eyes-Up (Story 4.2, AC-4.2.8)", () => {
+  it("holds no attention-sink content (no timer/log/dashboard/score/streak)", () => {
     const { container } = render(HostControls, { props: { state: state(), onclose: vi.fn() } });
     expect(container.textContent ?? "").not.toMatch(/timer|activity|log|dashboard|score|streak/i);
   });

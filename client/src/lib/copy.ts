@@ -90,6 +90,28 @@ export const SHOWDOWN = "Show the cards";
  *  the one-level overlay's heading. The three controls it holds (Lives, remove, reassign) are Story 4.2. */
 export const HOST_CONTROLS = "Host controls";
 
+// --- Host Controls sheet — the three FR-14 controls (Story 4.2, UX-DR13/UX-DR14). Short, glanceable,
+//     warm; section labels read as plain headings, not jargon. Eyes-Up: no stats/log/dashboard wording. ---
+
+/** Lives stepper section label inside the ⚙ sheet (Story 4.2, FR-14). */
+export const LIVES = "Lives";
+
+/** Roster section label inside the ⚙ sheet (Story 4.2, FR-14) — the remove-a-Player list. */
+export const PLAYERS = "Players";
+
+/** Remove-a-Player affordance label (Story 4.2, FR-14) — error-tinted, paired with a confirm step (never
+ *  color alone; the label + the confirm prompt carry the meaning for SR / color-blind Players). */
+export const REMOVE = "Remove";
+
+/** The confirm prompt shown after tapping Remove (Story 4.2) — names the Player so it's unmistakable. */
+export const confirmRemove = (name: string): string => `Remove ${name}?`;
+
+/** Reassign-host section label inside the ⚙ sheet (Story 4.2, FR-14) — "hand off the conductor role". */
+export const REASSIGN_HOST = "Make someone else host";
+
+/** Per-row reassign action label (Story 4.2, FR-14) — pass the Host role to this Player. */
+export const MAKE_HOST = "Make host";
+
 /** Eliminated (Epic 3, Story 3.5) — also the surface shown today (Eliminated.svelte stub). */
 export const ELIMINATED = "You're out — stick around and heckle.";
 

@@ -485,9 +485,12 @@ test("AC-1.8.2: a non-Host hostSetLives is refused with not-host; authoritative 
   guest.close();
 });
 
-test("AC-1.8.3: hostSetLives outside lobby is refused with phase-illegal", async () => {
-  // Seed a non-lobby summary (mirror the 1.7 late-join seed). D2.1 coerces the live `turns` phase to
-  // `roundResult` on wake — still !== "lobby", so the lobby-only set-lives refusal holds.
+test("AC-1.8.2/4.2.1: hostSetLives is no longer lobby-only — an unstamped socket outside lobby is refused not-host", async () => {
+  // Story 4.2 (FR-14) LIFTS the lobby-only restriction: the Host may change Lives mid-session. So a
+  // non-lobby phase no longer refuses the Host — instead the host-authority check governs. Here we send
+  // hostSetLives on a FRESH (unstamped) socket against a seeded non-lobby table: an unstamped caller is not
+  // the host → `not-host` (the meaningful refusal now, before the token check). The mid-session "set
+  // ongoing, never revive" happy path + the stale-phase refusal live in table-server-host-controls.do.test.ts.
   const stub = env.Table.get(env.Table.idFromName("PHIL"));
   await runInDurableObject(stub, async (_instance, state) => {
     await state.storage.put("table", {
@@ -500,14 +503,11 @@ test("AC-1.8.3: hostSetLives outside lobby is refused with phase-illegal", async
     });
   });
 
-  // Connect + create to identify this socket as the host of THIS DO... but the DO is already claimed
-  // (seeded summary) so createRoom is rejected. Instead we just send hostSetLives on a fresh socket:
-  // the seeded phase is non-lobby, so phase-illegal fires before the host check regardless of identity.
   const conn = await openConn("PHIL");
   conn.send({ type: "hostSetLives", payload: { phaseToken: 2, lives: 4 } });
   const ev = await conn.next();
   expect(ev.type).toBe("error");
-  expect((ev as Extract<ServerEvent, { type: "error" }>).payload.reason).toBe("phase-illegal");
+  expect((ev as Extract<ServerEvent, { type: "error" }>).payload.reason).toBe("not-host");
   conn.close();
 });
 

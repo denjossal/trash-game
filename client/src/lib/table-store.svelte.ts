@@ -19,6 +19,8 @@ import {
   buildDealAgainIntent,
   buildDealIntent,
   buildDrawIntent,
+  buildHostRemovePlayerIntent,
+  buildHostReassignIntent,
   buildHostSetLivesIntent,
   buildKeepIntent,
   buildNewGameIntent,
@@ -108,6 +110,33 @@ export async function joinTable(code: string, name: string): Promise<void> {
 export function sendHostSetLives(lives: number, phaseToken: number): void {
   if (liveSocket === null) return;
   sendIntent(liveSocket, buildHostSetLivesIntent(lives, phaseToken));
+}
+
+/**
+ * The Host REMOVES a Player from the Table (Story 4.2, FR-14) — from the ⚙ Host Controls sheet roster.
+ * Sends `hostRemovePlayer{phaseToken, playerId}` on the live socket via the GATE-1-exempt `sendIntent`
+ * (NEVER socket.send from a surface). The server validates Host authority + the phase token, removes the
+ * seat (advancing the turn if the removed Player was on it, AR-5), and fans out a fresh tableState every
+ * device re-renders from; a stale/self/bad-id copy is rejected (`stale-phase`/`phase-illegal`) and swallowed
+ * silently (handleSocketMessage drops error envelopes — AC-2.2.3). The sheet passes the current
+ * `state.phaseToken`. Fire-and-forget; no-op without a live socket.
+ */
+export function sendHostRemovePlayer(playerId: string, phaseToken: number): void {
+  if (liveSocket === null) return;
+  sendIntent(liveSocket, buildHostRemovePlayerIntent(playerId, phaseToken));
+}
+
+/**
+ * The Host REASSIGNS the conductor role to another Player (Story 4.2, FR-14, AR-5) — from the ⚙ sheet.
+ * Sends `hostReassign{phaseToken, playerId}` on the live socket via the GATE-1-exempt `sendIntent` (NEVER
+ * socket.send from a surface). The server validates Host authority + the phase token, sets `hostId` to the
+ * target, and fans out a fresh tableState: the new Host's device gains the conductor bar/sheet, the former
+ * Host's loses it. A stale/self/bad-id copy is rejected and swallowed silently (AC-2.2.3). The sheet passes
+ * the current `state.phaseToken`. Fire-and-forget; no-op without a live socket.
+ */
+export function sendHostReassign(playerId: string, phaseToken: number): void {
+  if (liveSocket === null) return;
+  sendIntent(liveSocket, buildHostReassignIntent(playerId, phaseToken));
 }
 
 /**

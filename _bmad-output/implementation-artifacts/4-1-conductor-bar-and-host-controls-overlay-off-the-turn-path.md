@@ -4,7 +4,7 @@ baseline_commit: ff44517c7361e0cbfa40594c709bf02b66788128
 
 # Story 4.1: Conductor bar & Host Controls overlay (off the turn path)
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
