@@ -194,6 +194,17 @@ test("AC-3.4.5/.9 (heads-up): revealAll resolves → roundResult → Host dealAg
   // Drive to allActed: host (start) keeps → P1 keeps.
   const allActed = await everyoneKeeps(host, hostId, [{ conn: p1, id: p1Id }], hostDealt);
 
+  // Rig the hands so there is EXACTLY ONE loser (host lowest). The random deal can otherwise hand both
+  // heads-up seats equal-rank cards → a TIE → 2 losers → the `loserIds.length === 1` assertion flakes
+  // (a pre-existing nondeterminism, unrelated to the round-loss fix). Set deterministic ranks in the live
+  // round before the reveal (server-side only; resolveShowdown reads these in-process). [See FULLFLOW rig.]
+  const stub = env.Table.get(env.Table.idFromName("DA2"));
+  await runInDurableObject(stub, async (instance) => {
+    const t = (instance as unknown as TableServer).table!;
+    t.round!.hands[hostId] = { rank: 2, suit: "♥" }; // lowest → host is the sole loser
+    t.round!.hands[p1Id] = { rank: 13, suit: "♠" }; // high → safe
+  });
+
   // Host reveals → resolution lands roundResult (≥2 alive), loserIds set, loser's lives decremented.
   host.send({ type: "revealAll", payload: { phaseToken: allActed.phaseToken } });
   const result = await nextPhase(host, "roundResult");
