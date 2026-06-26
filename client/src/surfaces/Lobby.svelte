@@ -10,7 +10,7 @@
   // DESIGN.md:186. So Lobby is now Host-control-free: just the code + roster + the non-Host waiting hint.
   import type { ProjectedTableState } from "@trash/shared";
   import LivesPips from "../components/LivesPips.svelte";
-  import { roomCode, waitingForHost } from "../lib/copy";
+  import { t } from "../lib/i18n.svelte";
 
   const { state }: { state: ProjectedTableState } = $props();
 
@@ -29,7 +29,7 @@
         <span class="code-slot">{letter}</span>
       {/each}
     </div>
-    <p class="code-caption">{roomCode(state.code)}</p>
+    <p class="code-caption">{t("roomCode", { code: state.code })}</p>
   </header>
 
   <ul class="roster">
@@ -42,7 +42,7 @@
   </ul>
 
   {#if !isHost}
-    <p class="hint">{waitingForHost(hostName)}</p>
+    <p class="hint">{t("waitingForHost", { host: hostName })}</p>
   {/if}
 </main>
 

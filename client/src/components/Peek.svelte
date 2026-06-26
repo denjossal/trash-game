@@ -23,7 +23,7 @@
   // verified by manual/Playwright (non-deterministic in jsdom).
   import type { Card as CardType } from "@trash/shared";
   import { cardSpeech } from "../lib/card-display";
-  import { PEEK_HINT } from "../lib/copy";
+  import { t } from "../lib/i18n.svelte";
   import Card from "./Card.svelte";
 
   const { card }: { card: CardType } = $props();
@@ -67,7 +67,7 @@
 <button
   class="peek"
   type="button"
-  aria-label={PEEK_HINT}
+  aria-label={t("PEEK_HINT")}
   aria-pressed={revealed}
   onpointerdown={reveal}
   onpointerup={hide}
@@ -82,7 +82,7 @@
   }}
   onkeyup={(e) => {
     if (e.key === "Enter" || e.key === " ") hide();
-  }}>{PEEK_HINT}</button>
+  }}>{t("PEEK_HINT")}</button>
 
 <style>
   /* The own-card slot — subordinate to the host surface's primary content (NFR-9). touch-action:none

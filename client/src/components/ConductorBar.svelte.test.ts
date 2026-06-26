@@ -12,8 +12,14 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
-import { DEAL, HOST_CONTROLS, RE_DEAL, SHOWDOWN } from "../lib/copy";
+import { t } from "../lib/i18n.svelte";
 import ConductorBar from "./ConductorBar.svelte";
+
+// Story 7.1: copy moved to the keyed i18n dictionary; alias the English strings so assertions read unchanged.
+const DEAL = t("DEAL");
+const HOST_CONTROLS = t("HOST_CONTROLS");
+const RE_DEAL = t("RE_DEAL");
+const SHOWDOWN = t("SHOWDOWN");
 
 // The bar's primaries call the store phase-send seams. Mock the store module so the test asserts the bar
 // posts the right intent with the projection's phaseToken (the store→socket wiring is the seam test's job).

@@ -9,8 +9,16 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
-import { DRAW, JUST_SWAPPED, KEEP, PEEK_HINT, SWAP, YOUR_TURN } from "../lib/copy";
+import { t } from "../lib/i18n.svelte";
 import { DEBOUNCE_MS } from "../lib/interaction";
+
+// Story 7.1: copy moved to the keyed i18n dictionary; alias the English strings so assertions read unchanged.
+const DRAW = t("DRAW");
+const JUST_SWAPPED = t("JUST_SWAPPED");
+const KEEP = t("KEEP");
+const PEEK_HINT = t("PEEK_HINT");
+const SWAP = t("SWAP");
+const YOUR_TURN = t("YOUR_TURN");
 import { cardSpeech } from "../lib/card-display";
 
 const sendSwap = vi.fn();

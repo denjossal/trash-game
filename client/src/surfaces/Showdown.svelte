@@ -29,7 +29,7 @@
   // Stories 3.6/3.5). [Source: epics.md#Story 3.4/4.1; UX-DR10/UX-DR14.]
   import type { ProjectedTableState } from "@trash/shared";
   import Card from "../components/Card.svelte";
-  import { loser, TIE, WAITING_TO_REDEAL } from "../lib/copy";
+  import { t } from "../lib/i18n.svelte";
 
   const { state }: { state: ProjectedTableState } = $props();
 
@@ -92,16 +92,16 @@
   </ul>
 
   {#if allTied}
-    <p class="loser-copy tie" role="status" aria-live="polite">{TIE}</p>
+    <p class="loser-copy tie" role="status" aria-live="polite">{t("TIE")}</p>
   {:else if youLost && ownSeat}
-    <p class="loser-copy" role="status" aria-live="polite">{loser(ownSeat.name)}</p>
+    <p class="loser-copy" role="status" aria-live="polite">{t("loser", { name: ownSeat.name })}</p>
   {/if}
 
   {#if canReDeal && !isHost}
     <!-- Re-deal beat (Story 3.4 / 4.1): the HOST'S Re-deal action is the conductor bar's (overlay, Story
          4.1). Non-Hosts get the waiting line here so they still have a cue. Absent at gameOver. -->
     <p class="redeal-waiting" data-testid="redeal-waiting" role="status" aria-live="polite">
-      {WAITING_TO_REDEAL}
+      {t("WAITING_TO_REDEAL")}
     </p>
   {/if}
 </main>

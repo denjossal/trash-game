@@ -18,15 +18,7 @@
   import type { ProjectedTableState } from "@trash/shared";
   import { MAX_LIVES, MIN_LIVES } from "@trash/shared";
   import LivesPips from "../components/LivesPips.svelte";
-  import {
-    HOST_CONTROLS,
-    LIVES,
-    MAKE_HOST,
-    PLAYERS,
-    REASSIGN_HOST,
-    REMOVE,
-    confirmRemove,
-  } from "../lib/copy";
+  import { t } from "../lib/i18n.svelte";
   import { sendHostRemovePlayer, sendHostReassign, sendHostSetLives } from "../lib/table-store.svelte";
 
   // Alias the prop to `tableState` internally: a binding named `state` collides with the `$state` rune
@@ -112,32 +104,32 @@
     class="sheet"
     role="dialog"
     aria-modal="true"
-    aria-label={HOST_CONTROLS}
+    aria-label={t("HOST_CONTROLS")}
     tabindex="-1"
     bind:this={sheetEl}
     onkeydown={onKeydown}
     onclick={(e) => e.stopPropagation()}
   >
     <header class="head">
-      <h2>{HOST_CONTROLS}</h2>
-      <button class="icon-button close" type="button" aria-label="Close host controls" onclick={onclose}>✕</button>
+      <h2>{t("HOST_CONTROLS")}</h2>
+      <button class="icon-button close" type="button" aria-label={t("CLOSE_HOST_CONTROLS")} onclick={onclose}>✕</button>
     </header>
 
     <!-- 1) Lives stepper (1..5). Moved here from the Lobby in Story 4.2 — the ⚙ sheet is the sole home. The
             server applies M1 ("set ongoing, never revive"): a raise tops up alive Players, a lower clamps
             them, an eliminated seat is never revived. -->
     <section class="control" aria-labelledby="hc-lives">
-      <h3 id="hc-lives">{LIVES}</h3>
-      <div class="stepper" aria-label="Lives stepper">
+      <h3 id="hc-lives">{t("LIVES")}</h3>
+      <div class="stepper" aria-label={t("LIVES_STEPPER")}>
         <button
           class="step"
-          aria-label="Decrease lives"
+          aria-label={t("DECREASE_LIVES")}
           disabled={tableState.startingLives <= MIN_LIVES}
           onclick={() => setLives(tableState.startingLives - 1)}>−</button>
-        <span class="lives-value" aria-label="Starting lives">{tableState.startingLives}</span>
+        <span class="lives-value" aria-label={t("STARTING_LIVES")}>{tableState.startingLives}</span>
         <button
           class="step"
-          aria-label="Increase lives"
+          aria-label={t("INCREASE_LIVES")}
           disabled={tableState.startingLives >= MAX_LIVES}
           onclick={() => setLives(tableState.startingLives + 1)}>+</button>
       </div>
@@ -147,7 +139,7 @@
             affordance is a two-step: Remove → Confirm {name}? — guarding against an accidental tap. The error
             tint is paired with the "Remove"/"Remove {name}?" label so it never relies on color alone. -->
     <section class="control" aria-labelledby="hc-players">
-      <h3 id="hc-players">{PLAYERS}</h3>
+      <h3 id="hc-players">{t("PLAYERS")}</h3>
       <ul class="roster">
         {#each players as p (p.id)}
           <li class="row" class:disconnected={!p.isConnected}>
@@ -157,15 +149,15 @@
               {#if pendingRemoveId === p.id}
                 <span class="confirm">
                   <button class="danger confirm-yes" type="button" onclick={() => confirmRemoveNow(p.id)}
-                    >{confirmRemove(p.name)}</button>
-                  <button class="cancel" type="button" aria-label="Cancel remove" onclick={cancelRemove}>✕</button>
+                    >{t("confirmRemove", { name: p.name })}</button>
+                  <button class="cancel" type="button" aria-label={t("CANCEL_REMOVE")} onclick={cancelRemove}>✕</button>
                 </span>
               {:else}
                 <button
                   class="danger"
                   type="button"
-                  aria-label={`Remove ${p.name}`}
-                  onclick={() => askRemove(p.id)}>{REMOVE}</button>
+                  aria-label={t("removePlayer", { name: p.name })}
+                  onclick={() => askRemove(p.id)}>{t("REMOVE")}</button>
               {/if}
             {/if}
           </li>
@@ -177,7 +169,7 @@
             legal target — an eliminated Host keeps conducting). One tap hands off the conductor role. -->
     {#if others.length > 0}
       <section class="control" aria-labelledby="hc-reassign">
-        <h3 id="hc-reassign">{REASSIGN_HOST}</h3>
+        <h3 id="hc-reassign">{t("REASSIGN_HOST")}</h3>
         <ul class="roster">
           {#each others as p (p.id)}
             <li class="row">
@@ -185,8 +177,8 @@
               <button
                 class="make-host"
                 type="button"
-                aria-label={`Make ${p.name} host`}
-                onclick={() => makeHost(p.id)}>{MAKE_HOST}</button>
+                aria-label={t("makePlayerHost", { name: p.name })}
+                onclick={() => makeHost(p.id)}>{t("MAKE_HOST")}</button>
             </li>
           {/each}
         </ul>

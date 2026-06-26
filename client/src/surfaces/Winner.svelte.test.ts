@@ -10,7 +10,12 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
-import { ONE_MORE, WAITING_TO_NEW_GAME, winner } from "../lib/copy";
+import { t } from "../lib/i18n.svelte";
+
+// Story 7.1: copy moved to the keyed i18n dictionary; alias the English strings so assertions read unchanged.
+const ONE_MORE = t("ONE_MORE");
+const WAITING_TO_NEW_GAME = t("WAITING_TO_NEW_GAME");
+const winner = (name: string) => t("winner", { name });
 import Winner from "./Winner.svelte";
 
 // The one-more block calls the store's sendNewGame seam. Mock the store module so the test asserts the

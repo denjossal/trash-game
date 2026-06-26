@@ -10,7 +10,11 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Card, ProjectedTableState } from "@trash/shared";
-import { JUST_SWAPPED, PEEK_HINT } from "../lib/copy";
+import { t } from "../lib/i18n.svelte";
+
+// Story 7.1: copy moved to the keyed i18n dictionary; alias the English strings so assertions read unchanged.
+const JUST_SWAPPED = t("JUST_SWAPPED");
+const PEEK_HINT = t("PEEK_HINT");
 
 import Waiting from "./Waiting.svelte";
 

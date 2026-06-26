@@ -19,7 +19,7 @@
   // leaderboard. The surface holds only the celebration + the one action (or the non-Host waiting line).
   import type { ProjectedTableState } from "@trash/shared";
   import Button from "../components/Button.svelte";
-  import { ONE_MORE, WAITING_TO_NEW_GAME, winner } from "../lib/copy";
+  import { t } from "../lib/i18n.svelte";
   import { sendNewGame } from "../lib/table-store.svelte";
 
   const { state }: { state: ProjectedTableState } = $props();
@@ -45,7 +45,7 @@
 </script>
 
 <main class="surface">
-  <h1>{joinedName ? winner(joinedName) : "Winner!"}</h1>
+  <h1>{joinedName ? t("winner", { name: joinedName }) : t("WINNER_FALLBACK")}</h1>
 
   {#if canStartNewGame}
     <!-- One-more beat: Host-only primary action (one tap → a fresh game on the same Table); a non-Host
@@ -53,11 +53,11 @@
          conductor-bar component is Story 4.1). -->
     {#if isHost}
       <div class="one-more" data-testid="newgame-host">
-        <Button onclick={() => sendNewGame(state.phaseToken)}>{ONE_MORE}</Button>
+        <Button onclick={() => sendNewGame(state.phaseToken)}>{t("ONE_MORE")}</Button>
       </div>
     {:else}
       <p class="one-more-waiting" data-testid="newgame-waiting" role="status" aria-live="polite">
-        {WAITING_TO_NEW_GAME}
+        {t("WAITING_TO_NEW_GAME")}
       </p>
     {/if}
   {/if}

@@ -30,15 +30,18 @@
   // (NEVER socket.send from a surface) — the only egress here, behind the Host+gameOver gate.
   import type { ProjectedTableState } from "@trash/shared";
   import Button from "../components/Button.svelte";
-  import { ELIMINATED, ONE_MORE } from "../lib/copy";
+  import { t } from "../lib/i18n.svelte";
   import { sendNewGame } from "../lib/table-store.svelte";
 
   const { state }: { state: ProjectedTableState } = $props();
 
   // Split the single source line into the lead/subline visual halves. `tail` falls back to "" so a
   // future copy edit that drops/changes the " — " separator degrades to a lead-only line rather than
-  // rendering the literal "undefined" — the string in copy.ts stays the source of truth (UX-DR16).
-  const [lead, tail = ""] = ELIMINATED.split(" — ");
+  // rendering the literal "undefined" — the dictionary string (i18n.svelte) stays the source of truth.
+  // `$derived` so a language switch re-splits the localized line. (UX-DR16.)
+  const parts = $derived(t("ELIMINATED").split(" — "));
+  const lead = $derived(parts[0]);
+  const tail = $derived(parts[1] ?? "");
 
   // A non-winning Host at the terminal phase conducts "one more"; otherwise this stays a pure spectator
   // surface (no action). Both conditions matter: phase gates out mid-game elimination, isHost gates out
@@ -60,7 +63,7 @@
          Host-only block mirroring the Winner/Showdown one-more pattern (the shared conductor-bar component
          is Story 4.1). Absent for a non-Host spectator and at any live phase. -->
     <div class="one-more" data-testid="newgame-host">
-      <Button onclick={() => sendNewGame(state.phaseToken)}>{ONE_MORE}</Button>
+      <Button onclick={() => sendNewGame(state.phaseToken)}>{t("ONE_MORE")}</Button>
     </div>
   {/if}
 </main>

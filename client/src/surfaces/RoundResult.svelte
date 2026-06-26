@@ -19,7 +19,7 @@
   // so non-Hosts would otherwise have no cue.
   import type { ProjectedTableState } from "@trash/shared";
   import LivesPips from "../components/LivesPips.svelte";
-  import { WAITING_TO_REDEAL, ROUND_OVER } from "../lib/copy";
+  import { t } from "../lib/i18n.svelte";
 
   const { state }: { state: ProjectedTableState } = $props();
 
@@ -34,12 +34,12 @@
 </script>
 
 <main class="surface">
-  <h1>{ROUND_OVER}</h1>
+  <h1>{t("ROUND_OVER")}</h1>
 
   {#if losers.length > 0}
     <p class="losers" role="status" aria-live="polite">
       {losers.map((p) => p.name).join(", ")}
-      {losers.length > 1 ? "each lost a life." : "lost a life."}
+      {t("lostALife", { plural: losers.length > 1 })}
     </p>
   {/if}
 
@@ -57,7 +57,7 @@
     <!-- Re-deal beat (Story 3.4 / 4.1): the HOST'S Re-deal action is the conductor bar's (overlay, Story
          4.1). Non-Hosts get the waiting line here so they still have a cue. -->
     <p class="redeal-waiting" data-testid="redeal-waiting" role="status" aria-live="polite">
-      {WAITING_TO_REDEAL}
+      {t("WAITING_TO_REDEAL")}
     </p>
   {/if}
 </main>

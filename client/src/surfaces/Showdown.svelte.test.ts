@@ -13,7 +13,13 @@
 import { cleanup, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
-import { loser, RE_DEAL, TIE, WAITING_TO_REDEAL } from "../lib/copy";
+import { t } from "../lib/i18n.svelte";
+
+// Story 7.1: copy moved to the keyed i18n dictionary; alias the English strings so assertions read unchanged.
+const loser = (name: string) => t("loser", { name });
+const RE_DEAL = t("RE_DEAL");
+const TIE = t("TIE");
+const WAITING_TO_REDEAL = t("WAITING_TO_REDEAL");
 import { rankToLetter } from "../lib/card-display";
 import Showdown from "./Showdown.svelte";
 

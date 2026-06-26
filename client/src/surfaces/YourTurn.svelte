@@ -31,7 +31,7 @@
   import type { ProjectedTableState } from "@trash/shared";
   import Button from "../components/Button.svelte";
   import Peek from "../components/Peek.svelte";
-  import { DRAW, JUST_SWAPPED, KEEP, SWAP, YOUR_TURN } from "../lib/copy";
+  import { t } from "../lib/i18n.svelte";
   import { sendDraw, sendKeep, sendSwap } from "../lib/table-store.svelte";
 
   // Renamed from `state` to `proj` to avoid the identifier colliding with the `$state` rune (Svelte
@@ -58,25 +58,25 @@
 
 <main class="surface">
   <!-- SR turn-announce (NFR-10): assertive so the screen reader announces the turn on transition. -->
-  <p class="prompt" role="status" aria-live="assertive">{YOUR_TURN}</p>
+  <p class="prompt" role="status" aria-live="assertive">{t("YOUR_TURN")}</p>
 
   {#if justSwapped}
     <!-- Value-free squirm beat (AR-7): no card data — just the social "you got dumped on" signal. -->
-    <p class="squirm" role="status" aria-live="polite">{JUST_SWAPPED}</p>
+    <p class="squirm" role="status" aria-live="polite">{t("JUST_SWAPPED")}</p>
   {/if}
 
   <!-- The two-button hero in the thumb zone. SWAP + KEEP are the FIRST two focus stops (reading order);
        the peek control follows below. -->
   <div class="actions">
-    <Button onclick={swap} ariaLabel={SWAP}>{SWAP}</Button>
-    <Button onclick={keep} ariaLabel={KEEP}>{KEEP}</Button>
+    <Button onclick={swap} ariaLabel={t("SWAP")}>{t("SWAP")}</Button>
+    <Button onclick={keep} ariaLabel={t("KEEP")}>{t("KEEP")}</Button>
     <!-- Last-Player ONLY (Story 2.6, FR-7, UX-DR5): a visually-subordinate Secondary "Draw from deck"
          button AFTER SWAP/KEEP (the two-button hero stays the first two focus stops, AC-2.4.7). Keyed on
          the value-free server field you.isLastPlayer — NEVER a card rank (SM-6 (c) — no behavioral tell).
          Reuses Button variant="secondary" (the built-in subordinate treatment: tonal surface, inert
          border, ≥48px, one-shot click debounce — the draw is a tap, not a hold like peek). -->
     {#if proj.you.isLastPlayer}
-      <Button onclick={draw} variant="secondary" ariaLabel={DRAW}>{DRAW}</Button>
+      <Button onclick={draw} variant="secondary" ariaLabel={t("DRAW")}>{t("DRAW")}</Button>
     {/if}
   </div>
 

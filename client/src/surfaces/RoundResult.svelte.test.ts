@@ -9,8 +9,12 @@
 import { cleanup, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
-import { RE_DEAL, WAITING_TO_REDEAL } from "../lib/copy";
+import { t } from "../lib/i18n.svelte";
 import RoundResult from "./RoundResult.svelte";
+
+// Story 7.1: copy moved to the keyed i18n dictionary; alias the English strings so assertions read unchanged.
+const RE_DEAL = t("RE_DEAL");
+const WAITING_TO_REDEAL = t("WAITING_TO_REDEAL");
 
 // Story 4.1 moved the Host's Re-deal action OFF this surface into the shared conductor bar (overlay). The
 // RoundResult surface no longer imports any store seam — it only renders the non-Host "waiting" line.

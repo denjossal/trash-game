@@ -21,7 +21,7 @@
   import type { ProjectedTableState } from "@trash/shared";
   import LivesPips from "../components/LivesPips.svelte";
   import Peek from "../components/Peek.svelte";
-  import { JUST_SWAPPED } from "../lib/copy";
+  import { t } from "../lib/i18n.svelte";
 
   const { state: proj }: { state: ProjectedTableState } = $props();
 
@@ -37,14 +37,14 @@
 </script>
 
 <main class="surface">
-  <h1 class="active">{activeName ? `${activeName}’s turn.` : "Hang tight."}</h1>
+  <h1 class="active">{activeName ? t("activeTurn", { name: activeName }) : t("HANG_TIGHT")}</h1>
 
   {#if justSwapped}
-    <p class="squirm" role="status" aria-live="polite">{JUST_SWAPPED}</p>
+    <p class="squirm" role="status" aria-live="polite">{t("JUST_SWAPPED")}</p>
   {/if}
 
   {#if self}
-    <div class="lives" aria-label="Your lives">
+    <div class="lives" aria-label={t("YOUR_LIVES")}>
       <LivesPips lives={self.lives} startingLives={proj.startingLives} />
     </div>
   {/if}

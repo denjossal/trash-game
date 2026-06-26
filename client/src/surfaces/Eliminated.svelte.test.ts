@@ -8,8 +8,12 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectedTableState } from "@trash/shared";
-import { ELIMINATED, ONE_MORE } from "../lib/copy";
+import { t } from "../lib/i18n.svelte";
 import Eliminated from "./Eliminated.svelte";
+
+// Story 7.1: copy moved to the keyed i18n dictionary; alias the English strings so assertions read unchanged.
+const ELIMINATED = t("ELIMINATED");
+const ONE_MORE = t("ONE_MORE");
 
 // A non-winning HOST reaches Eliminated at gameOver (router sends only the winner to Winner; everyone else
 // — incl. a non-winning Host — routes here). AR-5: the Host keeps conducting, so the one-more action lives

@@ -9,7 +9,7 @@
   // GATE-1 bans .send outside socket.ts/push-state.ts). Primary actions sit in the lower thumb-zone.
   import { ROOM_CODE_ALPHABET, ROOM_CODE_LEN } from "@trash/shared";
   import Button from "../components/Button.svelte";
-  import { APP_NAME, BAD_CODE, JOIN_TABLE, START_TABLE, TABLE_BUSY } from "../lib/copy";
+  import { t } from "../lib/i18n.svelte";
   import { MAX_NAME_LEN } from "../lib/interaction";
   import { joinTable, startTable } from "../lib/table-store.svelte";
 
@@ -89,19 +89,19 @@
       // A full / already-playing table gets its own copy (the code is RIGHT, so "check the letters" would
       // mislead); everything else (bad-code / transport) is the generic bad-code prompt. Field persists.
       const reason = (err as { reason?: string } | undefined)?.reason;
-      error = reason === "room-full" || reason === "phase-illegal" ? TABLE_BUSY : BAD_CODE;
+      error = reason === "room-full" || reason === "phase-illegal" ? t("TABLE_BUSY") : t("BAD_CODE");
       busy = false;
     }
   }
 </script>
 
 <main class="surface">
-  <h1>{APP_NAME}</h1>
+  <h1>{t("APP_NAME")}</h1>
 
   {#if mode === "choose"}
     <div class="actions">
-      <Button onclick={() => (mode = "start")}>{START_TABLE}</Button>
-      <Button onclick={() => (mode = "join")}>{JOIN_TABLE}</Button>
+      <Button onclick={() => (mode = "start")}>{t("START_TABLE")}</Button>
+      <Button onclick={() => (mode = "join")}>{t("JOIN_TABLE")}</Button>
     </div>
   {:else}
     <form class="panel" onsubmit={(e) => e.preventDefault()}>
@@ -141,9 +141,9 @@
 
       <div class="actions">
         {#if mode === "join"}
-          <Button onclick={doJoin} disabled={!canJoin}>{JOIN_TABLE}</Button>
+          <Button onclick={doJoin} disabled={!canJoin}>{t("JOIN_TABLE")}</Button>
         {:else}
-          <Button onclick={doStart} disabled={!canStart}>{START_TABLE}</Button>
+          <Button onclick={doStart} disabled={!canStart}>{t("START_TABLE")}</Button>
         {/if}
       </div>
     </form>

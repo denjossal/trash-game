@@ -10,8 +10,15 @@
 // the test drives the UI without a real WebSocket. [Source: story Task 2; EXPERIENCE.md Cold open/Bad code.]
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BAD_CODE, JOIN_TABLE, START_TABLE, TABLE_BUSY } from "../lib/copy";
+import { t } from "../lib/i18n.svelte";
 import { MAX_NAME_LEN } from "../lib/interaction";
+
+// Story 7.1: copy moved to the keyed i18n dictionary. These aliases resolve the English strings once so
+// the existing assertions (which match on the rendered text) read unchanged.
+const BAD_CODE = t("BAD_CODE");
+const JOIN_TABLE = t("JOIN_TABLE");
+const START_TABLE = t("START_TABLE");
+const TABLE_BUSY = t("TABLE_BUSY");
 
 // Mock the session module: startTable/joinTable are async; the test controls resolve/reject.
 const startTable = vi.fn();

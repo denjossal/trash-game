@@ -22,7 +22,7 @@
   import { MIN_PLAYERS } from "@trash/shared";
   import Button from "./Button.svelte";
   import HostControls from "../surfaces/HostControls.svelte";
-  import { DEAL, HOST_CONTROLS, RE_DEAL, SHOWDOWN } from "../lib/copy";
+  import { t } from "../lib/i18n.svelte";
   import { sendDeal, sendDealAgain, sendRevealAll } from "../lib/table-store.svelte";
 
   // Alias the prop to `tableState` internally: a binding literally named `state` collides with the `$state`
@@ -52,18 +52,18 @@
 {#if isHost}
   <div class="conductor" data-testid="conductor-bar">
     {#if tableState.phase === "lobby"}
-      <Button onclick={() => sendDeal(tableState.phaseToken)} disabled={!canDeal}>{DEAL}</Button>
+      <Button onclick={() => sendDeal(tableState.phaseToken)} disabled={!canDeal}>{t("DEAL")}</Button>
     {:else if tableState.phase === "allActed"}
-      <Button onclick={() => sendRevealAll(tableState.phaseToken)}>{SHOWDOWN}</Button>
+      <Button onclick={() => sendRevealAll(tableState.phaseToken)}>{t("SHOWDOWN")}</Button>
     {:else if tableState.phase === "roundResult"}
-      <Button onclick={() => sendDealAgain(tableState.phaseToken)}>{RE_DEAL}</Button>
+      <Button onclick={() => sendDealAgain(tableState.phaseToken)}>{t("RE_DEAL")}</Button>
     {/if}
 
     <!-- The ⚙ controls affordance — a real ≥48dp labelled button; opens the one-level sheet. -->
     <button
       class="icon-button gear"
       type="button"
-      aria-label={HOST_CONTROLS}
+      aria-label={t("HOST_CONTROLS")}
       aria-haspopup="dialog"
       aria-expanded={controlsOpen}
       bind:this={gearEl}

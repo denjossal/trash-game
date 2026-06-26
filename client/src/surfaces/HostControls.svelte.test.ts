@@ -22,8 +22,11 @@ vi.mock("../lib/table-store.svelte", () => ({
   sendHostReassign: (...a: unknown[]) => sendHostReassign(...a),
 }));
 
-import { HOST_CONTROLS } from "../lib/copy";
+import { t } from "../lib/i18n.svelte";
 import HostControls from "./HostControls.svelte";
+
+// Story 7.1: copy moved to the keyed i18n dictionary; alias the English string so assertions read unchanged.
+const HOST_CONTROLS = t("HOST_CONTROLS");
 
 function player(id: string, name: string, over: Partial<ProjectedTableState["players"][number]> = {}) {
   return { id, name, lives: 3, isAlive: true, isConnected: true, seatIndex: 0, ...over };
