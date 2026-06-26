@@ -1,11 +1,14 @@
 ---
 stepsCompleted: [1, "1-confirmed", 2, 3]
+v2StepsCompleted: [1, "1-confirmed", 2, 3]
 inputDocuments:
   - '_bmad-output/planning-artifacts/prds/prd-trash-game-2026-06-19/prd.md'
   - '_bmad-output/planning-artifacts/prds/prd-trash-game-2026-06-19/addendum.md'
   - '_bmad-output/planning-artifacts/architecture.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-trash-game-2026-06-19/EXPERIENCE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-trash-game-2026-06-19/DESIGN.md'
+  - '_bmad-output/planning-artifacts/prds/prd-trash-game-2026-06-25/prd.md'
+  - '_bmad-output/planning-artifacts/prds/prd-trash-game-2026-06-25/addendum.md'
 ---
 
 # trash-game - Epic Breakdown
@@ -32,6 +35,15 @@ FR-11: Each Loser loses exactly one Life automatically; ties deduct from every t
 FR-12: When exactly one non-eliminated Player remains, they win and the game ends; zero-survivors case (all eliminated in one Showdown) = shared win; otherwise a single Host Re-deal starts the next Round with surviving Players; the Round's Loser becomes the next Starting Player (multi-Loser tiebreak per FR-5; eliminated-Loser falls to next surviving seat to the right).
 FR-13: The app auto-scales the Deck to Table size without Host input — one 52-card deck for ≤10 Players, two merged decks for 11–20; not surfaced as a setting; duplicate values (and more frequent ties) are accepted at large Tables.
 FR-14: The Host has mid-session controls (available only to the Host, never on a Player's Turn surface): change Lives (1–5, between Rounds), remove a Player (excluded from next Deal; mid-Round removal resolves at next Showdown/Re-deal), and reassign the Host role (exactly one Host at any time).
+
+#### v2 (PRD prd-trash-game-2026-06-25)
+
+FR-15: A Player chooses their UI language on their own device — a toggle on the Home/Join surface, reachable before entering a Room Code; the choice is stored in the device's `localStorage`, survives reload/re-join, and is per-device (changes nothing on any other device or on the Table/server). v2 supports English (default) and Spanish; the toggle is legible in both states (not color-alone).
+FR-16: All mechanical UI chrome localizes to the chosen language — every button, prompt, and status line ("Es tu turno", "Cambiar / Quedarse", "Mostrar las cartas"); `copy.ts` becomes a keyed dictionary with one entry per language read through by every surface; parameterized strings (loser(name), roomCode(code), …) localize with parameters intact and grammatically natural; the Room Code value itself is not translated (only its label).
+FR-17: The warm emotional copy (loser, winner, waiting, elimination lines) is AUTHORED in Spanish to match the MVP's playful, non-punishing voice — not machine-translated; co-winner joining reads naturally in Spanish grammar. Definition of Done: a fluent-Spanish speaker reviews the warm copy for warmth/voice and signs off (approver: Dennis or a designated fluent reviewer) — this sign-off is the FR-17 acceptance gate.
+FR-18: Localized comedy sting (Tier 3) — SATISFIED BY DESIGN. The loser's-device comedy moment carries no language content (purely visual), so it is language-neutral and needs no v2 work; the FR re-activates only if a future sting gains words or spoken audio.
+FR-19: Card face glyphs and spoken (screen-reader) names localize — Spanish glyphs A=As, J=Jota, Q="Q" (Reina), K="R" (Rey); only the King glyph changes from the English face, and the Queen glyph stays "Q" to avoid the Reina/Rey "R" collision (the Q-glyph / "Reina"-speech mismatch is INTENTIONAL — do not "fix" it). Spoken names in Spanish (As/Jota/Reina/Rey + number cards). Suit stays ignored; this touches only `card-display.ts` (`rankToLetter`/`rankSpeech`); rank comparison stays integer-based and unchanged.
+FR-20: A Player who is NOT currently on their Turn can press-and-hold to peek their own Card on the Waiting surface — available to any off-turn Player (both waiting-to-act and already-acted), card hides on release (and on focus-loss / page-hide, matching the MVP on-Turn peek's safety behavior), always shows the Player's CURRENT card (after a Swap moves a new Card in, the peek shows the new Card). The privacy invariant holds without exception: a Card is shown only to its owner's own device while that owner holds the gesture; nothing new is sent over the wire and no other Player's Card is ever revealed.
 
 ### NonFunctional Requirements
 
@@ -89,6 +101,11 @@ NFR-10 (Accessibility floor): Legible across a table — large type, high contra
 - UX-DR17 (PWA shell): `vite-plugin-pwa` provides the installable app-shell (manifest + the two produced icons, cleaned/warm copy); offline gameplay explicitly out of scope (game requires the live WebSocket); portrait-only, dark-mode-only in MVP.
 - UX-DR18 (Interaction primitives + safety): Tap to act with debounced buttons (no double-fire); no timers/auto-advance anywhere; Showdown is the only place motion is loud; the banned-elements list (feeds/chat/push/badges/idle animation/scroll-bait) is honored everywhere.
 
+#### v2 (PRD prd-trash-game-2026-06-25)
+
+- UX-DR19 (Language toggle on Home/Join): A per-device language toggle on the Home/Join surface, reachable before entering the Room Code (off the clock). Legible in both states — flag + label, never color-alone (NFR-10). Reflects/sets the `localStorage` preference; reactive so a change re-renders the surface immediately. v2 = English (default) / Spanish; the toggle does NOT appear as a host/Table control (it is device-local, not room-level). Eyes-up: a one-time quiet choice, not a settings sink.
+- UX-DR20 (Off-Turn peek on the Waiting surface): The calm Waiting surface (UX-DR6) gains a press-and-hold peek affordance that mirrors UX-DR7's behavior exactly — own Card shows as Display-XL on hold, re-hides on release / focus-loss / app-background; rank absent from the a11y tree when hidden; an SR-accessible "Peek your card" element announces the rank once to the owner's device only. The Waiting surface otherwise stays the calmest surface (no always-on card, no motion, nothing to scroll — NFR-9). Available to any Player whose Turn it is not; the on-Turn peek (UX-DR7) remains the affordance for the active Player (the two are mutually exclusive by surface, never doubled).
+
 ### FR Coverage Map
 
 FR-1: Epic 1 — Create a Table; Host gets a Room Code.
@@ -105,6 +122,12 @@ FR-11: Epic 3 — Deduct Lives + eliminate at zero.
 FR-12: Epic 3 — Win check + one-tap Re-deal; Loser starts next Round.
 FR-13: Epic 5 — Auto Deck scaling (1 deck ≤10, 2 merged decks 11–20).
 FR-14: Epic 4 — Host mid-session controls (change Lives, remove Player, reassign Host).
+FR-15: Epic 7 — Per-device language choice (toggle on Home/Join; localStorage).
+FR-16: Epic 7 — UI chrome localizes (copy.ts keyed dictionary).
+FR-17: Epic 7 — Warm authored Spanish copy (fluent-speaker sign-off DoD).
+FR-18: — Satisfied by design (comedy sting is purely visual; no v2 work).
+FR-19: Epic 7 — Spanish card ranks (A=As / J=Jota / Q="Q" / K="R"; card-display.ts).
+FR-20: Epic 6 — Off-Turn peek on the Waiting surface.
 
 **NFR / AR / UX-DR distribution (cross-cutting items threaded as ACs):**
 - NFR-1 / AR-4 (privacy chokepoint) — established in Epic 1, upheld in every subsequent epic.
@@ -142,6 +165,14 @@ The Host keeps a real table moving without restarting — change Lives between R
 ### Epic 5: Scale to the whole table
 The app silently scales the Deck to the headcount — one deck for ≤10 Players, two merged decks for 11–20 — so the Host never thinks about it, and the Loser computation stays correct and unambiguous at a full 20-Player table where duplicate values (and more frequent ties) are expected and accepted.
 **FRs covered:** FR-13 (and hardens FR-10/FR-11 at scale)
+
+### Epic 6: See your card while you wait (v2)
+A waiting Player can press-and-hold to peek their own secret Card on the Waiting surface — not just on their own Turn — so they can study their hand as the swap chain crawls toward them. Delivers the off-Turn-peek tension (UJ-5, SM-4), entirely client-side, with the secret-Card privacy rule held the whole way. Standalone: extends the Story 2.5 peek mechanic onto the Story 2.4 Waiting surface, reading the already-delivered `you.hand`; no dependency on Epic 7.
+**FRs covered:** FR-20
+
+### Epic 7: Play in your language (v2)
+Each Player picks their own UI language on their device — English or Spanish — and the whole app speaks it to them: buttons, prompts, the warm loser/winner lines, and the Spanish card faces (As, Jota, Reina, Rey). A mixed table just works — abuela plays in Español while her grandson plays in English on his own phone. Delivers the bilingual welcome (UJ-4, SM-3), client-local per-device, with zero server or contract change. Standalone: a pure client refactor of `copy.ts` + `card-display.ts` + a toggle; no dependency on Epic 6.
+**FRs covered:** FR-15, FR-16, FR-17, FR-19 (FR-18 satisfied-by-design)
 
 ## Party-Mode Review Decisions (binding on story creation)
 
@@ -895,3 +926,155 @@ So that an 11–20 Player Table plays correctly with the expected variance.
 **Given** the loser highlight at a full table
 **When** 20 cards are revealed
 **Then** the Loser(s) remain unmistakable (stroke + scale + position; the app finds them, not human eyeballing). *(FR-10, NFR-10, UX-DR9.)*
+
+## Epic 6: See your card while you wait (v2)
+
+A waiting Player can press-and-hold to peek their own secret Card on the Waiting surface — not just on their own Turn — so they can study their hand as the swap chain crawls toward them. Delivers the off-Turn-peek tension (UJ-5, SM-4), entirely client-side, with the secret-Card privacy rule held the whole way.
+
+**FRs:** FR-20 · **Anchors:** NFR-1 (privacy/SM-6), NFR-9 (eyes-up), NFR-10 (a11y); UX-DR6 (Waiting surface), UX-DR7 (peek behavior reused), UX-DR20 (new) · **v2 guardrails:** §11.3 zero-contract-change (no `types.ts`/server/persistence/projection change), G1 Eyes-Up, G2 $0. · **Build note:** the quick win — build FIRST. Extends Story 2.5's peek onto Story 2.4's Waiting surface; reads the already-delivered `you.hand`.
+
+### Story 6.1: Peek your own Card while waiting
+
+As a Player whose Turn it isn't (waiting to act, or already acted),
+I want to press and hold to peek my own Card on the Waiting surface,
+So that I can track what I'm holding as the swap chain crawls toward me — without ever exposing it to anyone else.
+
+**Acceptance Criteria:**
+
+**Given** the Waiting surface (any Player whose Turn it currently is NOT — both not-yet-acted and already-acted)
+**When** the Player presses and holds the peek control
+**Then** their own Card shows as a big rank + single suit pip (Display-XL), and on release it re-hides immediately — identical behavior to the on-Turn peek (Story 2.5 / UX-DR7); it is never shown persistently. *(FR-20, UX-DR20.)*
+
+**Given** a peeked Card on the Waiting surface and a distraction
+**When** the control loses focus or the app is backgrounded
+**Then** the Card auto-hides (a phone set down while waiting never exposes a hand). *(FR-20; verified via manual/Playwright — blur/visibilitychange/pagehide are not deterministic in jsdom, per the Story 2.5 precedent.)*
+
+**Given** the Player's current Card (after a Swap moved a new Card into their hand)
+**When** they peek on the Waiting surface
+**Then** the peek shows their CURRENT card (the newly-received one), not a stale snapshot — because the projection already delivers the owner their up-to-date `you.hand` on every state push. *(FR-20.)*
+
+**Given** the hidden (default) state on the Waiting surface
+**When** the surface renders
+**Then** the Card is NOT shown (the Waiting surface stays the calmest surface — only the active Player's name + your own Lives + the peek affordance; no always-on card, no motion, nothing to scroll), and the rank is NOT present in the accessibility tree while hidden. *(FR-20, NFR-9, UX-DR6, UX-DR20.)*
+
+**Given** the SR peek path on the Waiting surface
+**When** the "Peek your card" element is activated
+**Then** it announces the rank ONCE to the owner's device only and discards it (never a persistent readable node, never sent to any other device) — mirroring the Story 2.5 SR path. *(NFR-10, UX-DR20.)*
+
+**Given** the standing SM-6 privacy gate and the §11.3 zero-contract-change guardrail (Epic 0 / Story 1.4)
+**When** Story 6.1 is built
+**Then** NO server, `@trash/shared` (`types.ts`), persistence, or `projectStateFor` change is made — the owner's own `you.hand` is ALREADY delivered on every push; this story only RENDERS already-delivered data on a second client surface; the standing privacy test still passes unchanged (no new `ProjectedTableState` field is added). *(NFR-1, §11.3, Pre-mortem E.)*
+
+**Given** the active Player (whose Turn it currently IS)
+**When** surfaces render
+**Then** the off-Turn peek (this story / Waiting surface) and the on-Turn peek (Story 2.5 / Your Turn surface) are mutually exclusive by surface — never doubled; the active Player keeps peeking via the existing Your Turn affordance, the waiting Players via this one. *(FR-20, UX-DR20.)*
+
+**Given** the "swap-chain tell" (peeking right after a received Swap reveals the receiver's new card, hence the neighbor's old card — an emergent, deliberate v2 information shift)
+**When** Epic 6 is validated
+**Then** it is a play-confirmed observation (SM-C4), NOT a build clause — observed in a real session whether the extra information flow adds tension (good) or sours play into cheating-accusations (bad); fallback if it sours = revisit via correct-course. This story ships the mechanic; the tell is watched, not gated. *(SM-C4; PRD §8 open item; addendum D.)*
+
+## Epic 7: Play in your language (v2)
+
+Each Player picks their own UI language on their device — English or Spanish — and the whole app speaks it to them: buttons, prompts, the warm loser/winner lines, and the Spanish card faces (As, Jota, Reina, Rey). A mixed table just works — abuela plays in Español while her grandson plays in English on his own phone. Delivers the bilingual welcome (UJ-4, SM-3), client-local per-device, with zero server or contract change.
+
+**FRs:** FR-15, FR-16, FR-17, FR-19 (FR-18 satisfied-by-design) · **Anchors:** NFR-9 (eyes-up), NFR-10 (a11y — color-independence on the toggle, SR speech in-language); UX-DR8 (card display), UX-DR16 (voice), UX-DR19 (new), UX-DR3 (Home surface) · **v2 guardrails:** §11.3 zero-contract-change, G1 Eyes-Up, G2 $0. · **Build note:** pure client refactor of `copy.ts` + `card-display.ts` + a toggle. Story order matters: 7.1 (dictionary refactor) is the backbone every later story rides on.
+
+### Story 7.1: Keyed copy dictionary & language store (the backbone)
+
+As the builder,
+I want all client copy keyed and read through a language-aware accessor backed by a per-device preference,
+So that the whole app can render in a chosen language and adding Spanish (and later, any language) is just more dictionary entries.
+
+**Acceptance Criteria:**
+
+**Given** `client/src/lib/copy.ts` (today: 33 flat exports — 14 consts + 19 parameterized fns)
+**When** it is refactored
+**Then** copy becomes a keyed dictionary with one table per language (English + Spanish) read through a single accessor (e.g. `t(key, params)`); every surface reads through it; no user-facing string remains a bare hardcoded literal in a component. *(FR-16.)*
+
+**Given** the parameterized strings (e.g. `loser(name)`, `winner(name)`, `roomCode(code)`, `waitingForHost(host)`)
+**When** they localize
+**Then** they keep their parameters intact and read grammatically natural in each language; the Room Code VALUE is never translated (only its surrounding label). *(FR-16.)*
+
+**Given** a per-device language preference
+**When** the language store is built
+**Then** the chosen language is read from / written to the device's `localStorage`, the store is reactive (a change re-renders surfaces immediately), the first-run default is English (no device-locale auto-detect in v2), and the preference is per-device only — it sends nothing to the server and changes nothing on any other device. *(FR-15.)*
+
+**Given** the §11.3 zero-contract-change guardrail and G2 $0 gate
+**When** Story 7.1 is built
+**Then** NO server, `@trash/shared` (`types.ts`), persistence, or `projectStateFor` change is made, and no new dependency or paid service is added (a tiny hand-rolled dictionary/accessor, no heavyweight i18n runtime unless it is zero-cost and offline) — client-only. *(§11.3, G2.)*
+
+**Given** an English-only baseline before Spanish copy exists
+**When** the refactor lands
+**Then** the app renders identically to today in English (a pure refactor with no visible change for English users) — verified by existing surface tests still passing; this de-risks 7.1 as a behavior-preserving change before any translation work. *(FR-16; regression-safety.)*
+
+### Story 7.2: Language toggle on the Home / Join surface
+
+As a Player (including a Spanish-speaking relative handed a phone),
+I want to choose my language on the first screen before I join,
+So that the app speaks my language from the moment I enter the room code — off the clock, before any turn pressure.
+
+**Acceptance Criteria:**
+
+**Given** the Home / Join surface (built on the Story 7.1 store)
+**When** it renders
+**Then** a language toggle is present and reachable BEFORE entering the Room Code; it shows the current language and switches between English and Spanish; selecting a language updates the `localStorage` preference and re-renders the surface (and the whole app) immediately. *(FR-15, UX-DR19.)*
+
+**Given** the accessibility floor (NFR-10)
+**When** the toggle renders
+**Then** each state is legible without relying on color alone (e.g. flag + text label), the control is a ≥48dp tap target, and it is labeled with role + current state for screen readers. *(FR-15, NFR-10, UX-DR19.)*
+
+**Given** the Eyes-Up gate (G1) and the device-local model
+**When** the toggle is placed
+**Then** it is a one-time quiet choice on Home/Join (not a persistent settings sink, not an attention surface), and it is NOT presented as a Host/Table control anywhere (language is per-device, never room-level — it never appears in the Host Controls overlay). *(G1, NFR-9, UX-DR19.)*
+
+**Given** a returning device
+**When** the app re-opens or the Player re-joins
+**Then** the last-chosen language is restored from `localStorage` (the choice persists across reload/re-join). *(FR-15.)*
+
+### Story 7.3: Spanish card ranks (faces + screen-reader speech)
+
+As a Spanish-speaking Player,
+I want the cards to read in Spanish,
+So that the faces I see (and hear) are As, Jota, Reina, Rey — the game speaks my language down to the cards.
+
+**Acceptance Criteria:**
+
+**Given** `client/src/lib/card-display.ts` (`rankToLetter`, `rankSpeech`) — the SOLE home of the rank→letter map (UX-DR8)
+**When** the chosen language is Spanish
+**Then** rank glyphs render as **A = As, J = Jota, Q = "Q" (Reina), K = "R" (Rey)** — only the King glyph changes from the English face; the Queen glyph stays "Q" to avoid the Reina/Rey "R" collision; number cards render their numerals unchanged. *(FR-19, UX-DR8.)*
+
+**Given** the screen-reader speech path
+**When** a Card is announced in Spanish
+**Then** spoken rank names are **As / Jota / Reina / Rey** (and the number cards in Spanish); the Queen's GLYPH "Q" paired with SPOKEN "Reina" is an INTENTIONAL mismatch (glyph dodges the R-collision; speech is fully Spanish) and is documented as such so it is not "corrected" downstream. *(FR-19, NFR-10.)*
+
+**Given** suit handling and rank comparison
+**When** Spanish ranks render
+**Then** suit stays decorative and ignored by the game exactly as in the MVP (distinguished by shape not color), and rank COMPARISON remains integer-based and untouched — this story changes display/speech only, never game logic. *(FR-19, UX-DR8.)*
+
+**Given** the English language selection
+**When** cards render
+**Then** the English faces are unchanged (A / J / Q / K, spoken Ace/Jack/Queen/King) — Spanish is purely additive. *(FR-19; regression-safety.)*
+
+### Story 7.4: Warm Spanish voice (authored, not translated)
+
+As a Spanish-speaking Player,
+I want the emotional moments to feel as warm and playful in Spanish as in English,
+So that losing a life still feels like gentle ribbing, never a cold "you lost."
+
+**Acceptance Criteria:**
+
+**Given** the warm copy keys (loser, winner, waiting, elimination, "one more?")
+**When** the Spanish entries are authored
+**Then** they are written to match the MVP's playful, non-punishing, inclusive voice (EXPERIENCE.md voice table) — NOT machine-translated; the loser line lands as gentle tease (never a Spanish "YOU LOST"), and the all-tied line carries the same warmth as the English. *(FR-17, UX-DR16.)*
+
+**Given** co-winners and parameterized warmth
+**When** the Spanish winner/co-winner copy renders
+**Then** co-winner joining reads grammatically natural in Spanish ("Ana y Ben"; the 3+ list form), and parameterized names slot in naturally. *(FR-17, UX-DR16.)*
+
+**Given** the FR-17 Definition of Done (subjective "tone-matched" needs a human gate)
+**When** the Spanish warm copy is reviewed for done
+**Then** a fluent-Spanish speaker reviews it for warmth/voice and SIGNS OFF (approver: Dennis or a designated fluent reviewer); the story is not complete until this sign-off is recorded. This is the FR-17 acceptance gate, mirroring the MVP's per-surface voice-conformance ACs (decision #5). *(FR-17.)*
+
+**Given** the mixed-language table (the motivating scenario, UJ-4 / SM-3)
+**When** Epic 7 is validated end-to-end
+**Then** it is play-confirmed (SM-3): a Spanish-speaking relative at a mixed table plays a full session in Spanish needing no UI help, while another player at the same table plays in English on their own device, and neither sees a state discrepancy (SM-C3 "no accidental Babel" — only language differs, never game state). *(SM-3, SM-C3, UJ-4.)*
