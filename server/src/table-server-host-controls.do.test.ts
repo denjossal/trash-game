@@ -373,6 +373,265 @@ test("AC-4.2.4 (mid-Round, current turn): removing the current-turn Player advan
   for (const g of guests) g.close();
 });
 
+test("REPRO playtest 2026-06-23 (remove a NON-current un-acted player): the current player can STILL swap/keep", async () => {
+  // Playtest: "after removing a player can't swap or keep." A different player (not on turn) was removed,
+  // and the current player saw Swap/Keep but the taps did nothing. Repro: 3 players at `turns`; the host
+  // is the Starting Player (current). Remove a NON-current, un-acted guest, then the host (still current)
+  // sends `keep` with the projected turnToken — it MUST be accepted and advance the turn, not be rejected.
+  const { host, created, guests } = await lobbyOf("RMNONCUR", 3);
+  const { hostDealt } = await deal(host, created, guests);
+  const hostId = hostDealt.you.playerId;
+  expect(hostDealt.currentTurnId).toBe(hostId); // host is the current (starting) player
+
+  // Pick a guest who is NOT on turn and has NOT acted.
+  const victimId = [...hostDealt.players].find((p) => p.id !== hostId)!.id;
+  expect(victimId).not.toBe(hostDealt.currentTurnId);
+
+  // Host removes the non-current guest mid-Round.
+  host.send({ type: "hostRemovePlayer", payload: { phaseToken: hostDealt.phaseToken, playerId: victimId } });
+  const afterRemove = await nextRosterSize(host, 2);
+  expect(afterRemove.players.some((p) => p.id === victimId)).toBe(false);
+  // The host is STILL the current-turn player (a non-current removal must not touch the round).
+  expect(afterRemove.currentTurnId).toBe(hostId);
+
+  // Now the host tries to keep — supplying the turnToken from the post-removal projection (what the live
+  // client would actually send). If the bug is real this is rejected and the turn never advances.
+  host.send({ type: "keep", payload: { turnToken: afterRemove.turnToken! } });
+  const stub = env.Table.get(env.Table.idFromName("RMNONCUR"));
+  // Give the keep a moment to apply, then inspect the live round: the host must now be in `acted`
+  // (the keep was accepted) and the turn advanced off the host.
+  let live: { acted: string[]; currentTurnId: string | undefined; phase: string } | null = null;
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    live = await runInDurableObject(stub, async (instance) => {
+      const t = (instance as unknown as TableServer).table!;
+      return { acted: [...(t.round?.acted ?? [])], currentTurnId: t.round?.currentTurnId, phase: t.phase };
+    });
+    if (live.acted.includes(hostId)) break;
+  }
+  // THE ASSERTION: the host's keep was accepted (host is in acted). If the bug reproduces, this FAILS —
+  // the keep was silently rejected (stale-turn / not-your-turn / phase-illegal) and acted stays empty.
+  expect(live!.acted).toContain(hostId);
+
+  host.close();
+  for (const g of guests) g.close();
+});
+
+test("REPRO v2 (GUEST is current; host removes a DIFFERENT non-current player): the guest can still keep", async () => {
+  // Closer to the live report: a GUEST is taking their turn while the host removes someone else.
+  // 4 players so that after the host keeps, a guest is current AND there is still another removable
+  // non-current guest. Then remove that other guest and have the current guest keep.
+  const { host, created, guests } = await lobbyOf("RMGUESTCUR", 4);
+  const { hostDealt, guestDealt } = await deal(host, created, guests);
+  const hostId = hostDealt.you.playerId;
+  expect(hostDealt.currentTurnId).toBe(hostId);
+
+  // Host keeps → turn advances to the next seat (a guest).
+  host.send({ type: "keep", payload: { turnToken: hostDealt.turnToken } });
+  // Find which guest is now current.
+  const afterHostKeep = await nextTurn(host, nextActorAfter(hostDealt, new Map([
+    [hostId, host],
+    ...guestDealt.map((g, i) => [g.you.playerId, guests[i]] as const),
+  ])), 20);
+  const currentGuestId = afterHostKeep.currentTurnId!;
+  expect(currentGuestId).not.toBe(hostId);
+  const currentGuestConn = guests[guestDealt.findIndex((g) => g.you.playerId === currentGuestId)];
+
+  // Remove a DIFFERENT non-current guest (not the host, not the current guest).
+  const victimId = afterHostKeep.players.find((p) => p.id !== hostId && p.id !== currentGuestId)!.id;
+  host.send({ type: "hostRemovePlayer", payload: { phaseToken: afterHostKeep.phaseToken, playerId: victimId } });
+  const afterRemove = await nextRosterSize(host, 3);
+  expect(afterRemove.currentTurnId).toBe(currentGuestId); // current guest's turn is untouched
+
+  // The current guest reads its OWN latest projection (what its live client holds) and keeps.
+  const guestView = await nextRosterSize(currentGuestConn, 3);
+  currentGuestConn.send({ type: "keep", payload: { turnToken: guestView.turnToken! } });
+
+  const stub = env.Table.get(env.Table.idFromName("RMGUESTCUR"));
+  let live: { acted: string[] } | null = null;
+  for (let i = 0; i < 25; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    live = await runInDurableObject(stub, async (instance) => {
+      const t = (instance as unknown as TableServer).table!;
+      return { acted: [...(t.round?.acted ?? [])] };
+    });
+    if (live.acted.includes(currentGuestId)) break;
+  }
+  expect(live!.acted).toContain(currentGuestId);
+
+  host.close();
+  for (const g of guests) g.close();
+});
+
+test("REPRO playtest 2026-06-23 (remove a player in the LOBBY, then deal): the round deals and is playable", async () => {
+  // Playtest: "Before starting the game I remove the player so game is stuck." Repro: 3 players in the
+  // lobby, host removes a guest, THEN host deals. The deal must succeed and land a playable `turns` round
+  // (every alive seat carded, currentTurnId on a present seat). Survivors keep their original seatIndex
+  // (immutable-for-life), so the roster is now non-contiguous in seatIndex — the deal/turn walk must cope.
+  const code = "RMLOBBY";
+  const { host, created, guests } = await lobbyOf(code, 3);
+  const hostId = created.you.playerId;
+  const stub = env.Table.get(env.Table.idFromName(code));
+  const peek = () =>
+    runInDurableObject(stub, async (instance) => {
+      const t = (instance as unknown as TableServer).table!;
+      return {
+        phase: t.phase as string,
+        phaseToken: t.phaseToken,
+        players: t.players.map((p) => ({ id: p.id, seatIndex: p.seatIndex, isAlive: p.isAlive })),
+        currentTurnId: t.round?.currentTurnId,
+        turnToken: t.round?.turnToken,
+        acted: [...(t.round?.acted ?? [])],
+        carded: t.round ? t.players.filter((p) => p.isAlive && t.round!.hands[p.id] !== undefined).length : 0,
+      };
+    });
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+
+  // Remove a guest in the LOBBY (before any deal).
+  let s = await peek();
+  const victimId = s.players.find((p) => p.id !== hostId)!.id;
+  host.send({ type: "hostRemovePlayer", payload: { phaseToken: s.phaseToken, playerId: victimId } });
+  for (let i = 0; i < 20 && (await peek()).players.length !== 2; i++) await settle();
+  s = await peek();
+  expect(s.players.some((p) => p.id === victimId)).toBe(false);
+  expect(s.phase).toBe("lobby");
+
+  // Now DEAL.
+  host.send({ type: "deal", payload: { phaseToken: s.phaseToken } });
+  for (let i = 0; i < 20 && (await peek()).phase !== "turns"; i++) await settle();
+  s = await peek();
+  // CHECKPOINT 1: does the deal reach a playable turns round at all (server state)?
+  expect(s.phase).toBe("turns");
+  expect(s.carded).toBe(2); // both remaining alive seats carded
+  expect(s.players.some((p) => p.id === s.currentTurnId)).toBe(true); // turn on a present seat
+
+  // CHECKPOINT 2: the current player can act.
+  const connById = new Map<string, OpenConn>([[hostId, host], [s.players.find((p)=>p.id!==hostId)!.id, guests[0]]]);
+  connById.get(s.currentTurnId!)?.send({ type: "keep", payload: { turnToken: s.turnToken! } });
+  for (let i = 0; i < 20 && !(await peek()).acted.includes(s.currentTurnId!); i++) await settle();
+  expect((await peek()).acted).toContain(s.currentTurnId!);
+
+  host.close();
+  for (const g of guests) g.close();
+});
+
+test("REPRO playtest 2026-06-23 (FULL FLOW: lives=1, remove D, host A loses → eliminated, B's turn): B can keep", async () => {
+  // Exact live flow: A creates; B,C,D join; A sets lives=1; deal; remove D; A (host) loses the round →
+  // 0 lives → eliminated; 2 alive (B,C) → roundResult; re-deal → it's B's turn but B can't swap/keep.
+  // POLL-BASED (never waits on socket fan-out, which is what hangs): drive by inspecting the live DO state.
+  const code = "FULLFLOW";
+  const { host: a, created, guests } = await lobbyOf(code, 4);
+  const [b, c] = guests;
+  const aId = created.you.playerId;
+  const stub = env.Table.get(env.Table.idFromName(code));
+
+  const peek = () =>
+    runInDurableObject(stub, async (instance) => {
+      const t = (instance as unknown as TableServer).table!;
+      return {
+        phase: t.phase as string,
+        phaseToken: t.phaseToken,
+        startingLives: t.startingLives,
+        players: t.players.map((p) => ({ id: p.id, seatIndex: p.seatIndex, isAlive: p.isAlive, lives: p.lives })),
+        currentTurnId: t.round?.currentTurnId,
+        turnToken: t.round?.turnToken,
+        acted: [...(t.round?.acted ?? [])],
+        nextStartingPlayerId: t.nextStartingPlayerId,
+        hands: t.round ? Object.keys(t.round.hands) : [],
+      };
+    });
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+
+  // A sets lives = 1 (lobby).
+  let s = await peek();
+  a.send({ type: "hostSetLives", payload: { phaseToken: s.phaseToken, lives: 1 } });
+  for (let i = 0; i < 20 && (await peek()).startingLives !== 1; i++) await settle();
+  s = await peek();
+  expect(s.startingLives).toBe(1);
+
+  // Deal.
+  a.send({ type: "deal", payload: { phaseToken: s.phaseToken } });
+  for (let i = 0; i < 20 && (await peek()).phase !== "turns"; i++) await settle();
+  s = await peek();
+  expect(s.phase).toBe("turns");
+  const bySeat = [...s.players].sort((x, y) => x.seatIndex - y.seatIndex);
+  const bId = b ? bySeat.find((p) => p.id !== aId)!.id : "";
+  const dId = bySeat[bySeat.length - 1].id; // last seat = D
+  void c;
+
+  // Remove D.
+  a.send({ type: "hostRemovePlayer", payload: { phaseToken: s.phaseToken, playerId: dId } });
+  for (let i = 0; i < 20 && (await peek()).players.length !== 3; i++) await settle();
+  s = await peek();
+  expect(s.players.some((p) => p.id === dId)).toBe(false);
+
+  // Conns by id (only A,B,C remain relevant). Build the non-host id list once and assert every entry
+  // mapped to a REAL id — a `?? ""` fallback would silently map a connection to an empty-string key, so
+  // `connById.get(currentTurnId)` would miss and the keep would no-op (under-driving the pass and
+  // failing CHECKPOINT 1 for the wrong reason). Pin that the map is well-formed before driving.
+  const nonHostIds = bySeat.filter((p) => p.id !== aId).map((p) => p.id);
+  const connById = new Map<string, OpenConn>([[aId, a], ...guests.map((g, i) => [nonHostIds[i], g] as const)]);
+  expect([...connById.keys()].every((id) => id.length > 0)).toBe(true);
+
+  // Drive remaining alive seats to allActed by keeping on whoever holds the turn. A transient/stale
+  // peek (mid fan-out) can momentarily read a non-`turns` phase or an empty currentTurnId BEFORE the
+  // pass actually completes — do NOT treat that as "done" (the old `break` conflated the two and could
+  // exit having sent zero keeps, then fail CHECKPOINT 1 as a confusing timing artifact). Instead skip
+  // and re-poll; only `allActed` ends the loop. Track keeps sent so a stuck pass is diagnosable.
+  let keepsSent = 0;
+  for (let i = 0; i < 30; i++) {
+    s = await peek();
+    if (s.phase === "allActed") break;
+    if (s.phase === "turns" && s.currentTurnId) {
+      connById.get(s.currentTurnId)?.send({ type: "keep", payload: { turnToken: s.turnToken! } });
+      keepsSent++;
+    }
+    await settle(); // transient state → just wait and re-poll
+  }
+  s = await peek();
+  // The pass cannot complete without at least one keep landing — guard so a zero-keep early exit is
+  // reported as such rather than masquerading as a phase bug.
+  expect(keepsSent).toBeGreaterThan(0);
+  expect(s.phase).toBe("allActed"); // CHECKPOINT 1: did the pass complete after D's removal?
+
+  // Rig hands so A (host) is lowest → A loses its only life → eliminated.
+  await runInDurableObject(stub, async (instance) => {
+    const t = (instance as unknown as TableServer).table!;
+    const alive = t.players.filter((p) => p.isAlive).map((p) => p.id);
+    t.round!.hands[aId] = { rank: 2, suit: "♥" }; // lowest → A loses
+    for (const id of alive) if (id !== aId) t.round!.hands[id] = { rank: 13, suit: "♠" };
+  });
+
+  // Reveal.
+  s = await peek();
+  a.send({ type: "revealAll", payload: { phaseToken: s.phaseToken } });
+  for (let i = 0; i < 20 && !["roundResult", "gameOver"].includes((await peek()).phase); i++) await settle();
+  s = await peek();
+  expect(s.phase).toBe("roundResult"); // CHECKPOINT 2: 2 alive (B,C) → roundResult not gameOver
+  expect(s.players.find((p) => p.id === aId)?.isAlive).toBe(false); // A eliminated
+  const nextStarter = s.players.find((p) => p.id === s.nextStartingPlayerId);
+  expect(nextStarter?.isAlive).toBe(true); // CHECKPOINT 3: next starter must be ALIVE, never eliminated A
+
+  // Re-deal.
+  s = await peek();
+  a.send({ type: "dealAgain", payload: { phaseToken: s.phaseToken } });
+  for (let i = 0; i < 20 && (await peek()).phase !== "turns"; i++) await settle();
+  s = await peek();
+  expect(s.phase).toBe("turns"); // CHECKPOINT 4: re-deal reached a playable round
+  const cur = s.players.find((p) => p.id === s.currentTurnId);
+  expect(cur?.isAlive).toBe(true); // CHECKPOINT 5: the turn points at an ALIVE present seat
+
+  // The current player keeps — must be accepted (this is "B can't swap/keep").
+  connById.get(s.currentTurnId!)?.send({ type: "keep", payload: { turnToken: s.turnToken! } });
+  for (let i = 0; i < 20 && !(await peek()).acted.includes(s.currentTurnId!); i++) await settle();
+  const final = await peek();
+  expect(final.acted).toContain(s.currentTurnId!); // CHECKPOINT 6: B's keep was accepted
+
+  void bId;
+  a.close();
+  for (const g of guests) g.close();
+});
+
 test("AC-4.2.4 (mid-Round, current turn is the LAST un-acted seat): removal completes the pass → allActed (no stall)", async () => {
   // Regression (code review 2026-06-23): when every OTHER alive seat has already acted and the Host removes
   // the current-turn Player, the pass must complete (turns → allActed) so revealAll is reachable — the

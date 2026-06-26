@@ -3,12 +3,14 @@
 // Behavior pinned:
 //   - renders the ACTIVE Player's name (whose turn it is)
 //   - renders the CALLER's OWN Lives via LivesPips (filled + hollow pips)
-//   - renders NO card value (UX-DR6 — Waiting never shows a card)
 //   - the frame is INERT (not the active neon stroke) and has no pulse animation
-import { cleanup, render, screen, within } from "@testing-library/svelte";
+//   - (Story 6.1) off-turn peek: press-and-hold reveals the caller's OWN card; release re-hides;
+//     the rank is absent from the a11y tree while hidden; the peek always shows the CURRENT card;
+//     SR announce-once; peeking sends NOTHING.
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ProjectedTableState } from "@trash/shared";
-import { JUST_SWAPPED } from "../lib/copy";
+import type { Card, ProjectedTableState } from "@trash/shared";
+import { JUST_SWAPPED, PEEK_HINT } from "../lib/copy";
 
 import Waiting from "./Waiting.svelte";
 
@@ -33,6 +35,9 @@ function state(over: Partial<ProjectedTableState> = {}): ProjectedTableState {
   };
 }
 
+const KING: Card = { rank: 13, suit: "♠" };
+const FIVE: Card = { rank: 5, suit: "♥" };
+
 afterEach(cleanup);
 
 describe("Waiting surface", () => {
@@ -47,12 +52,6 @@ describe("Waiting surface", () => {
     // Beto (you) has 2 of 3 lives → 2 filled + 1 hollow.
     expect(within(lives).getAllByTestId("pip-filled")).toHaveLength(2);
     expect(within(lives).getAllByTestId("pip-hollow")).toHaveLength(1);
-  });
-
-  it("renders NO card value (UX-DR6 — Waiting never shows a card)", () => {
-    render(Waiting, { props: { state: state() } });
-    // No rank/suit anywhere in the surface — the active player's name + own pips only.
-    expect(document.body.textContent ?? "").not.toMatch(/[♠♥♦♣]/);
   });
 
   it("falls back to a warm neutral when the active player is not yet resolvable", () => {
@@ -71,5 +70,87 @@ describe("Waiting surface", () => {
   it("does NOT render the squirm beat when justReceivedSwap is absent (the normal waiting case)", () => {
     render(Waiting, { props: { state: state() } });
     expect(screen.queryByText(JUST_SWAPPED)).toBeNull();
+  });
+
+  // --- Story 6.1: off-turn peek on the Waiting surface (FR-20) ---
+
+  it("AC-6.1.4: hidden by default — the own card's rank is NOT in the a11y tree while waiting", () => {
+    render(Waiting, { props: { state: state({ you: { ...state().you, hand: KING } }) } });
+    // The face-down back is present; the revealed rank/suit nodes do NOT exist ({#if revealed}).
+    expect(screen.queryByText("K")).toBeNull();
+    expect(screen.queryByText("♠")).toBeNull();
+  });
+
+  it("AC-6.1.1: press-and-hold reveals the own card; release re-hides immediately", async () => {
+    render(Waiting, { props: { state: state({ you: { ...state().you, hand: KING } }) } });
+    const peek = screen.getByRole("button", { name: /peek/i });
+    await fireEvent.pointerDown(peek);
+    expect(screen.getByText("K")).toBeTruthy();
+    expect(screen.getByText("♠")).toBeTruthy();
+    await fireEvent.pointerUp(peek);
+    expect(screen.queryByText("K")).toBeNull();
+  });
+
+  it("AC-6.1.2: re-hides on pointercancel, pointerleave, and blur", async () => {
+    render(Waiting, { props: { state: state({ you: { ...state().you, hand: FIVE } }) } });
+    const peek = screen.getByRole("button", { name: /peek/i });
+    for (const end of ["pointerCancel", "pointerLeave", "blur"] as const) {
+      await fireEvent.pointerDown(peek);
+      expect(screen.getByText("5")).toBeTruthy();
+      await (fireEvent as unknown as Record<string, (el: Element) => Promise<boolean>>)[end](peek);
+      expect(screen.queryByText("5")).toBeNull();
+    }
+  });
+
+  it("AC-6.1.3: peek always shows the CURRENT card (follows a received swap)", async () => {
+    const { rerender } = render(Waiting, { props: { state: state({ you: { ...state().you, hand: FIVE } }) } });
+    const peek = screen.getByRole("button", { name: /peek/i });
+    await fireEvent.pointerDown(peek);
+    expect(screen.getByText("5")).toBeTruthy();
+    await fireEvent.pointerUp(peek);
+    // A swap moved a new card (the King) into the caller's hand — the projection re-pushes you.hand.
+    await rerender({ state: state({ you: { ...state().you, hand: KING } }) });
+    await fireEvent.pointerDown(peek);
+    expect(screen.getByText("K")).toBeTruthy();
+    expect(screen.queryByText("5")).toBeNull();
+  });
+
+  it("AC-6.1.5: SR announce-once — region is empty, set to the spoken card on reveal, cleared on release", async () => {
+    render(Waiting, { props: { state: state({ you: { ...state().you, hand: KING } }) } });
+    const region = screen.getByTestId("peek-announce");
+    expect(region.textContent).toBe("");
+    const peek = screen.getByRole("button", { name: /peek/i });
+    await fireEvent.pointerDown(peek);
+    expect(region.textContent).toMatch(/king/i);
+    await fireEvent.pointerUp(peek);
+    expect(region.textContent).toBe("");
+  });
+
+  it("AC-6.1.6: peeking sends NOTHING — the peek is the ONLY interactive control (no swap/keep/draw seam exists)", async () => {
+    // The previous version of this test mocked ../lib/table-store.svelte and asserted the send seams
+    // weren't called — but Waiting never imports that module, so the assertion was vacuous (it could
+    // never fail). The REAL guarantee that peeking can't send is structural: Waiting exposes NO
+    // Swap/Keep/Draw affordance at all — the only button is the press-and-hold peek, whose handlers
+    // (reveal/hide) touch only local UI state. Pin that here.
+    render(Waiting, { props: { state: state({ you: { ...state().you, hand: KING } }) } });
+
+    const buttons = screen.getAllByRole("button");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].getAttribute("aria-label")).toBe(PEEK_HINT);
+
+    // Exercising the peek lifecycle changes only the local reveal state (verified by AC-6.1.1); there
+    // is no other control through which a send could be triggered.
+    const peek = buttons[0];
+    await fireEvent.pointerDown(peek);
+    await fireEvent.pointerUp(peek);
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("AC-6.1.4: no peek control / card when the caller has no hand (early/odd projection) — does not throw", () => {
+    render(Waiting, { props: { state: state() } }); // no you.hand
+    expect(screen.queryByRole("button", { name: /peek/i })).toBeNull();
+    // The calm surface still renders: active name + own Lives.
+    expect(screen.getByText(/Mar’s turn\./)).toBeTruthy();
+    expect(screen.getByLabelText(/your lives/i)).toBeTruthy();
   });
 });
