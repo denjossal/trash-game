@@ -73,9 +73,50 @@ describe("i18n — t(key, params) accessor", () => {
   it("re-resolves through the ACTIVE language (switching re-renders surfaces in markup)", () => {
     expect(t("SWAP")).toBe("SWAP"); // en
     setLanguage("es");
-    // es is the placeholder mirror until Story 7.4 authors the warm voice — still fully resolvable.
-    expect(typeof t("SWAP")).toBe("string");
-    expect(t("SWAP").length).toBeGreaterThan(0);
+    expect(t("SWAP")).toBe("CAMBIAR"); // the SAME accessor now returns the Spanish entry
+  });
+});
+
+describe("i18n — Spanish authored voice (Story 7.4, FR-17)", () => {
+  it("Spanish copy is AUTHORED — distinct from English, not a mirror", () => {
+    const enSwap = t("SWAP");
+    setLanguage("es");
+    expect(t("SWAP")).not.toBe(enSwap); // "CAMBIAR" ≠ "SWAP" — the es table is real, not {...en}
+    expect(t("YOUR_TURN")).toMatch(/cambias|quedas/i); // neutral tú forms (Story 7.4)
+  });
+
+  it("the Spanish loser line is a gentle TEASE, never a cold 'you lost'", () => {
+    setLanguage("es");
+    const line = t("loser", { name: "Ana" });
+    expect(line).toContain("Ana"); // names the player warmly
+    expect(line).not.toMatch(/perdiste/i); // never the punishing "PERDISTE"
+    expect(line.toLowerCase()).toMatch(/vida/); // frames it as "a life", the MVP voice
+  });
+
+  it("co-winner joining reads grammatically in Spanish ('Ana y Ben'; 3+ list with 'y', no Oxford comma)", () => {
+    setLanguage("es");
+    expect(t("joinNames", { names: ["Ana"] })).toBe("Ana");
+    expect(t("joinNames", { names: ["Ana", "Ben"] })).toBe("Ana y Ben");
+    expect(t("joinNames", { names: ["Ana", "Ben", "Cy"] })).toBe("Ana, Ben y Cy");
+  });
+
+  it("English co-winner joining is unchanged ('Ana and Ben'; Oxford comma for 3+)", () => {
+    expect(t("joinNames", { names: ["Ana", "Ben"] })).toBe("Ana and Ben");
+    expect(t("joinNames", { names: ["Ana", "Ben", "Cy"] })).toBe("Ana, Ben, and Cy");
+  });
+
+  it("the Room Code value still rides through untranslated in Spanish", () => {
+    setLanguage("es");
+    expect(t("roomCode", { code: "WXYZ" })).toContain("WXYZ");
+  });
+
+  it("the language toggle label localizes (Idioma) but the endonyms stay (English / Español)", () => {
+    expect(t("LANGUAGE_LABEL")).toBe("Language");
+    expect(t("LANG_NAME_ES")).toBe("Español");
+    setLanguage("es");
+    expect(t("LANGUAGE_LABEL")).toBe("Idioma");
+    expect(t("LANG_NAME_EN")).toBe("English"); // endonym — same in every table
+    expect(t("LANG_NAME_ES")).toBe("Español");
   });
 });
 

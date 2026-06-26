@@ -97,6 +97,11 @@ export type Copy = {
   WINNER_FALLBACK: string;
   ONE_MORE: string;
   WAITING_TO_NEW_GAME: string;
+  // Language-aware list join (Story 7.4): co-winner names slot into ONE `winner` name slot. The
+  // connector is grammatical per language — en "Ana and Ben" / "Ana, Ben, and Cy"; es "Ana y Ben" /
+  // "Ana, Ben y Cy" (no Oxford comma in Spanish). Lives here, not in Winner.svelte, so the grammar is
+  // localized. [FR-17, AC-7.4.2.]
+  joinNames: (p: { names: string[] }) => string;
 };
 
 /** Keys whose value is a plain string (no params). */
@@ -159,12 +164,74 @@ const en: Copy = {
   WINNER_FALLBACK: "Winner!",
   ONE_MORE: "One more",
   WAITING_TO_NEW_GAME: "Waiting on the host to start one more…",
+  // "Ana" / "Ana and Ben" / "Ana, Ben, and Cy" (Oxford comma — matches the pre-7.4 Winner.svelte join).
+  joinNames: ({ names }) =>
+    names.length <= 2 ? names.join(" and ") : `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`,
 };
 
-// Spanish placeholder (Story 7.1 ships the BACKBONE; the authored warm es voice + Spanish card faces are
-// Stories 7.3/7.4). Mirroring English keeps `es` fully renderable today — the dictionary CONTRACT (Copy)
-// guarantees every key exists, so selecting es never produces a missing string. Replaced key-by-key in 7.4.
-const es: Copy = { ...en };
+// Spanish — AUTHORED warm voice (Story 7.4, FR-17), NOT machine-translated. Matches the MVP's playful,
+// non-punishing, inclusive tone: the loser line is a gentle tease ("uy, te tocó", never a cold "PERDISTE"),
+// the squirm beat is cheeky, the winner line is celebratory + inviting. Uses NEUTRAL / global Spanish
+// (informal "tú" — "revisas", "pruebas", "dilo", "quédate" — broad reach across regions, not voseo).
+// Card faces/speech live in card-display.ts (Story 7.3); this is UI chrome.
+//
+// FR-17 DEFINITION OF DONE: a fluent-Spanish speaker must review this table for warmth/voice and SIGN OFF
+// (approver: Dennis or a designated fluent reviewer). Until that sign-off is recorded, Story 7.4 is NOT
+// complete — this is the FR-17 acceptance gate (mirrors the MVP per-surface voice ACs, decision #5).
+const es: Copy = {
+  APP_NAME: "Trash",
+  CONNECTING: "Conectando…",
+  LANGUAGE_LABEL: "Idioma",
+  LANG_NAME_EN: "English", // endonyms — a language names itself the same way in every UI.
+  LANG_NAME_ES: "Español",
+  START_TABLE: "Crear una mesa",
+  JOIN_TABLE: "Unirme a una mesa",
+  BAD_CODE: "No hay ninguna mesa con ese código — ¿revisas las letras?",
+  TABLE_BUSY: "Esa mesa está llena o ya empezó — ¿pruebas con otra?",
+  DEAL: "Repartir",
+  roomCode: ({ code }) => `Tu código de mesa: ${code} — dilo en voz alta.`,
+  waitingForHost: ({ host }) => `Tranquilo — ${host} reparte cuando estén todos.`,
+  YOUR_TURN: "Tu turno. ¿La cambias o te la quedas?",
+  SWAP: "CAMBIAR",
+  KEEP: "QUEDÁRMELA",
+  PEEK_HINT: "Mantén pulsado para espiar.",
+  DRAW: "Sacar del mazo",
+  JUST_SWAPPED: "¡Alguien te hizo el cambio!",
+  loser: ({ name }) => `Uy — la carta más baja. Va una vida, ${name}.`,
+  TIE: "Empate en la más baja — ¡todos pierden una vida!",
+  ROUND_OVER: "Fin de la ronda.",
+  RE_DEAL: "Repartir la siguiente ronda",
+  WAITING_TO_REDEAL: "Esperando a que el anfitrión vuelva a repartir…",
+  lostALife: ({ plural }) => (plural ? "pierden una vida." : "pierde una vida."),
+  SHOWDOWN: "Mostrar las cartas",
+  HOST_CONTROLS: "Controles del anfitrión",
+  LIVES: "Vidas",
+  PLAYERS: "Jugadores",
+  REMOVE: "Sacar",
+  confirmRemove: ({ name }) => `¿Sacar a ${name}?`,
+  REASSIGN_HOST: "Hacer anfitrión a otro",
+  MAKE_HOST: "Hacer anfitrión",
+  CLOSE_HOST_CONTROLS: "Cerrar controles del anfitrión",
+  LIVES_STEPPER: "Selector de vidas",
+  DECREASE_LIVES: "Bajar vidas",
+  INCREASE_LIVES: "Subir vidas",
+  STARTING_LIVES: "Vidas iniciales",
+  removePlayer: ({ name }) => `Sacar a ${name}`,
+  CANCEL_REMOVE: "Cancelar",
+  makePlayerHost: ({ name }) => `Hacer anfitrión a ${name}`,
+  ELIMINATED: "Quedaste fuera — quédate y haz barra.",
+  winner: ({ name }) => `Gana ${name}. ¿Otra?`,
+  WINNER_FALLBACK: "¡Ganador!",
+  ONE_MORE: "Otra",
+  WAITING_TO_NEW_GAME: "Esperando a que el anfitrión empiece otra…",
+  // "Ana" / "Ana y Ben" / "Ana, Ben y Cy" — Spanish joins the last item with "y", no Oxford comma.
+  joinNames: ({ names }) =>
+    names.length <= 2 ? names.join(" y ") : `${names.slice(0, -1).join(", ")} y ${names.at(-1)}`,
+  // Waiting surface.
+  activeTurn: ({ name }) => `Turno de ${name}.`,
+  HANG_TIGHT: "Tranqui.",
+  YOUR_LIVES: "Tus vidas",
+};
 
 const DICTIONARIES: Record<Language, Copy> = { en, es };
 

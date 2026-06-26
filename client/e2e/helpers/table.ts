@@ -106,14 +106,14 @@ export async function driveBrowserToWaiting(page: Page, name = "E2E"): Promise<D
 
   // 2) Browser JOINS as player 2 through the REAL client UI (Home → Join a table → code + name → Join).
   await page.goto("/");
-  await page.getByRole("button", { name: /join a table/i }).click();
+  await page.getByRole("button", { name: /join a table|unirme a una mesa/i }).click();
   const slots = page.getByRole("textbox", { name: /room code letter/i });
   const letters = code.split("");
   for (let i = 0; i < letters.length; i++) {
     await slots.nth(i).fill(letters[i]);
   }
   await page.getByRole("textbox", { name: /your name/i }).fill(name);
-  await page.getByRole("button", { name: /join a table/i }).click();
+  await page.getByRole("button", { name: /join a table|unirme a una mesa/i }).click();
 
   // The browser is in the Lobby once it lands a tableState (App routes away from Home). The Lobby's
   // Room-Code header has the EXACT label `Room code <CODE>` — distinct from Home's `Room code` group +
@@ -129,7 +129,7 @@ export async function driveBrowserToWaiting(page: Page, name = "E2E"): Promise<D
   // browser (player 2) is on WAITING. The off-turn peek (Story 6.1) renders here on the real surface.
   const dealt = await host.waitFor(() => (host.last as any)?.phase === "turns" && typeof (host.last as any)?.turnToken === "number");
   if (!dealt) throw new Error("deal did not advance the round to `turns`");
-  await expect(page.getByRole("button", { name: /peek/i })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: /peek|espiar/i })).toBeVisible({ timeout: 15_000 });
 
   const turnToken = ((host.last as any)?.turnToken as number) ?? 0;
   return { code, host, turnToken };
@@ -144,8 +144,8 @@ export async function driveBrowserToYourTurn(page: Page, name = "E2E"): Promise<
 
   // The aux host KEEPS to pass the turn right to player 2 → the browser routes to YourTurn.
   host.send({ type: "keep", payload: { turnToken: (host.last as any).turnToken } });
-  await expect(page.getByRole("button", { name: /peek/i })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole("button", { name: /^keep$/i })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: /peek|espiar/i })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: /^keep$|quedármela/i })).toBeVisible({ timeout: 15_000 });
 
   const turnToken = ((host.last as any)?.turnToken as number) ?? 0;
   return { code, host, turnToken };

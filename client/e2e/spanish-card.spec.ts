@@ -11,7 +11,7 @@ test("Spanish device: the peeked own-card announce is in Spanish (de + Spanish s
   await page.addInitScript(() => localStorage.setItem("trash.language", "es"));
 
   const { host } = await driveBrowserToYourTurn(page);
-  const peek = page.getByRole("button", { name: /peek/i });
+  const peek = page.getByRole("button", { name: /peek|espiar/i }); // Spanish: "Mantené apretado para espiar"
   const region = page.getByTestId("peek-announce");
 
   await peek.dispatchEvent("pointerdown");

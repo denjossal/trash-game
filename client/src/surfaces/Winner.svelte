@@ -29,15 +29,10 @@
     state.players.filter((p) => state.winnerIds?.includes(p.id)).map((p) => p.name),
   );
 
-  // Join the names into the one `name` slot: "Ana", "Ana and Ben", or "Ana, Ben, and Cy". Falls back to a
-  // bare "Winner!" only defensively (a real gameOver always has at least one winner in winnerIds).
-  const joinedName = $derived(
-    winnerNames.length === 0
-      ? ""
-      : winnerNames.length <= 2
-        ? winnerNames.join(" and ")
-        : `${winnerNames.slice(0, -1).join(", ")}, and ${winnerNames.at(-1)}`,
-  );
+  // Join the names into the one `name` slot, with language-grammatical connectors (en "Ana and Ben" /
+  // es "Ana y Ben") — the join lives in the i18n dictionary (Story 7.4), not here. Falls back to a bare
+  // localized "Winner!" only defensively (a real gameOver always has at least one winner in winnerIds).
+  const joinedName = $derived(winnerNames.length === 0 ? "" : t("joinNames", { names: winnerNames }));
 
   const isHost = $derived(state.you.isHost);
   // The one-more action is offered ONLY at the terminal phase (defensive — this surface only routes there).
