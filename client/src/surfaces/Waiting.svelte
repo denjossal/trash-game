@@ -1,28 +1,39 @@
 <script lang="ts">
   // Waiting.svelte — the calmest surface (Story 2.4, FR-6, UX-DR6, NFR-9). Routed during a live round
   // when it is NOT your turn (route-from-state.ts: phase "turns"/"dealing"/"allActed", currentTurnId !==
-  // you). Shows ONLY the active Player's name in a STATIC frame (no pulse, no motion) plus YOUR OWN
-  // Lives — never any Card value, nothing to scroll (UX-DR6 / NFR-9).
+  // you). Shows the active Player's name in a STATIC frame (no pulse, no motion), YOUR OWN Lives, and —
+  // since Story 6.1 — a press-and-hold peek of YOUR OWN card. Never any other Player's card, nothing to
+  // scroll (UX-DR6 / NFR-9).
   //
-  // No card is rendered here: the projection omits non-owner hands, and even the caller's own `you.hand`
-  // is deliberately NOT shown on Waiting (the card belongs to the active surfaces / peek, Story 2.5).
-  // The frame is the INERT border (--border-inert), explicitly NOT the active neon stroke, and there is
-  // no pulse keyframe — the contrast with Your Turn's pulsing frame is the whole point.
+  // OFF-TURN PEEK (Story 6.1, FR-20, UX-DR20): the calm surface gains the SAME press-and-hold peek the
+  // active Player has on Your Turn (Story 2.5) — so a waiting Player can study their own card as the swap
+  // chain crawls toward them. The card is HELD-only (never an always-on display): hidden by default, shown
+  // only while the control is held, re-hidden on release/leave/cancel/blur/background. This reverses the
+  // 2.4/2.5 decision that Waiting deliberately showed no card — v2 makes the OWN card peekable here too.
+  //
+  // PRIVACY: the projection omits non-owner hands; the caller's OWN `you.hand` is ALREADY delivered on
+  // every push REGARDLESS of whose turn it is (project-state.ts sets you.hand from round.hands[you]
+  // unconditionally — the turn only gates ACTIONS). So this is a pure CLIENT display of on-device data:
+  // no server/projection/contract change, the standing SM-6 test is untouched. The peek is LOCAL UI-only
+  // state, never sent (there is no peek intent — architecture.md:556). The on-turn peek (YourTurn) and this
+  // off-turn peek share the SAME <Peek> component (one lifecycle) and are mutually exclusive by surface
+  // (route-from-state.ts:63-64) — never doubled.
   import type { ProjectedTableState } from "@trash/shared";
   import LivesPips from "../components/LivesPips.svelte";
+  import Peek from "../components/Peek.svelte";
   import { JUST_SWAPPED } from "../lib/copy";
 
-  const { state }: { state: ProjectedTableState } = $props();
+  const { state: proj }: { state: ProjectedTableState } = $props();
 
   // The active Player's name (whose turn it is). Falls back to a warm neutral if not yet resolvable.
-  const activeName = $derived(state.players.find((p) => p.id === state.currentTurnId)?.name ?? "");
+  const activeName = $derived(proj.players.find((p) => p.id === proj.currentTurnId)?.name ?? "");
   // The caller's OWN seat — for their Lives pips (find self via you.playerId).
-  const self = $derived(state.players.find((p) => p.id === state.you.playerId));
+  const self = $derived(proj.players.find((p) => p.id === proj.you.playerId));
   // Value-free squirm signal (AC-2.4.3): a mid-pass swap advances the turn to the receiver, so they
   // normally see this beat on Your Turn. But the FINAL swap of the pass completes it (phase → allActed,
   // currentTurnId cleared), routing the receiver HERE instead — so Waiting must render it too, or the
   // last-swap receiver silently loses the "someone swapped with you" moment. Carries NO card data (SM-6).
-  const justSwapped = $derived(state.justReceivedSwap === true);
+  const justSwapped = $derived(proj.justReceivedSwap === true);
 </script>
 
 <main class="surface">
@@ -34,8 +45,16 @@
 
   {#if self}
     <div class="lives" aria-label="Your lives">
-      <LivesPips lives={self.lives} startingLives={state.startingLives} />
+      <LivesPips lives={self.lives} startingLives={proj.startingLives} />
     </div>
+  {/if}
+
+  <!-- Off-turn peek (Story 6.1): the owner's own secret Card via the shared <Peek> control — a
+       face-down neon back at rest, the Display-XL face only while held. Guarded on you.hand so an
+       early/odd projection can't throw (and so an eliminated/hand-less seat shows no peek). Subordinate
+       to the calm name + Lives (NFR-9). -->
+  {#if proj.you.hand}
+    <Peek card={proj.you.hand} />
   {/if}
 </main>
 
