@@ -240,11 +240,21 @@ test("review-fix (durable starter): the persisted roundResult summary carries ne
   const p1Id = guestDealt[0].you.playerId;
 
   const allActed = await everyoneKeeps(host, hostId, [{ conn: p1, id: p1Id }], hostDealt);
+
+  // Rig the hands so there is EXACTLY ONE loser (host lowest) — a random heads-up deal can tie (both
+  // equal rank) → 2 losers → the `loserIds` single-element assertions below flake (pre-existing
+  // nondeterminism, not the durable-starter behavior under test). Set deterministic ranks before reveal.
+  const stub = env.Table.get(env.Table.idFromName("DAST"));
+  await runInDurableObject(stub, async (instance) => {
+    const t = (instance as unknown as TableServer).table!;
+    t.round!.hands[hostId] = { rank: 2, suit: "♥" }; // lowest → host is the sole loser
+    t.round!.hands[p1Id] = { rank: 13, suit: "♠" }; // high → safe
+  });
+
   host.send({ type: "revealAll", payload: { phaseToken: allActed.phaseToken } });
   const result = await nextPhase(host, "roundResult");
   const loserId = result.loserIds![0];
 
-  const stub = env.Table.get(env.Table.idFromName("DAST"));
   const persisted = await runInDurableObject(stub, async (_instance, state) =>
     state.storage.get<{ phase: string; nextStartingPlayerId?: string; loserIds?: string[] }>("table"),
   );

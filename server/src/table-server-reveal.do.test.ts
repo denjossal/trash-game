@@ -19,6 +19,7 @@
 import { SELF, env, runInDurableObject } from "cloudflare:test";
 import { expect, test } from "vitest";
 import type { ProjectedTableState, ServerEvent } from "@trash/shared";
+import type { TableServer } from "./table-server.js";
 
 type ServerEventMessage = ServerEvent;
 
@@ -161,6 +162,16 @@ test("AC-3.2.1/.4 + 3.4 (heads-up): allActed → Host revealAll → resolved rou
   const hostAllActed = await nextPhase(host, "allActed");
   await nextPhase(p1, "allActed");
   expect(hostAllActed.revealed).toBe(false); // cards still hidden at allActed (final but not revealed).
+
+  // Rig the hands so there is EXACTLY ONE loser (host lowest). A random heads-up deal can tie (both equal
+  // rank) → 2 losers → the single-loser assertions below flake (pre-existing nondeterminism). Set
+  // deterministic ranks in the live round before the reveal (server-side; resolveShowdown reads them).
+  const rigStub = env.Table.get(env.Table.idFromName("RVL"));
+  await runInDurableObject(rigStub, async (instance) => {
+    const t = (instance as unknown as TableServer).table!;
+    t.round!.hands[hostDealt.you.playerId] = { rank: 2, suit: "♥" }; // lowest → host is the sole loser
+    t.round!.hands[p1Id] = { rank: 13, suit: "♠" }; // high → safe
+  });
 
   // Host triggers the reveal, carrying the current phase token. Resolution runs in the SAME transition
   // (Story 3.4): heads-up → exactly one loser drops a life, both stay alive (≥2) → lands `roundResult`
