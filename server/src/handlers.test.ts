@@ -1,7 +1,8 @@
 // handlers.test.ts — pure unit tests for the turn-scoped gameplay handlers (Story 2.4: handleSwap /
 // handleKeep). Runs in the node `rules`-adjacent project (`*.test.ts` suffix, EXCLUDES `*.do.test.ts`).
-// The handlers need only a narrow TableHost (table + storage + connections); swap/keep do NOT persist
-// or fan out (those are dispatch's job), so a trivial stub suffices — no DO plumbing. The end-to-end
+// The handlers need only a narrow TableHost (table + storage + connections). Since the round-loss fix
+// (2026-06-26) swap/keep PERSIST the advanced round (the durable summary now carries it) but still do NOT
+// fan out (that is dispatch's job), so the persist-recording stub (hostWithStorage) is used; the end-to-end
 // wire path (real sockets, fan-out, projection) is covered by table-server-swap.do.test.ts.
 //
 // What this pins (AC-2.4.3/.4/.6):
@@ -119,7 +120,7 @@ test("handleSwap: exchanges the active player's & right-neighbor's hands, advanc
     B: { rank: 7, suit: "♥" },
     C: { rank: 10, suit: "♦" },
   });
-  const host = hostWith(table);
+  const host = hostWithStorage(table);
   await handleSwap(host, swapIntent(0), "A");
   expect(table.round!.hands.A).toEqual({ rank: 7, suit: "♥" });
   expect(table.round!.hands.B).toEqual({ rank: 2, suit: "♠" });
@@ -127,7 +128,10 @@ test("handleSwap: exchanges the active player's & right-neighbor's hands, advanc
   expect(table.round!.currentTurnId).toBe("B");
   expect(table.round!.turnToken).toBe(1); // bumped by exactly 1
   expect(table.round!.lastSwapReceiverId).toBe("B"); // squirm transient set for the receiver
-  expect(table.phase).toBe("turns"); // MID-pass (A is not the last seat) → phase stays turns (2.6 regression contract)
+  expect(table.phase).toBe("turns"); // MID-pass (A is not the last seat) → phase stays turns (2.6 contract)
+  // ROUND-LOSS FIX (2026-06-26): a mid-pass swap now PERSISTS the advanced round (was memory-only) so the
+  // round survives a DO eviction. phase stays turns; the durable summary carries the round.
+  expect(host.persisted).toEqual([{ phase: "turns", phaseToken: table.phaseToken }]);
 });
 
 test("handleKeep: leaves hands untouched, advances turn, bumps turn token (no squirm transient)", async () => {
@@ -136,18 +140,20 @@ test("handleKeep: leaves hands untouched, advances turn, bumps turn token (no sq
     B: { rank: 7, suit: "♥" },
     C: { rank: 10, suit: "♦" },
   });
-  const host = hostWith(table);
+  const host = hostWithStorage(table);
   await handleKeep(host, keepIntent(0), "A");
   expect(table.round!.hands.A).toEqual({ rank: 2, suit: "♠" }); // unchanged
   expect(table.round!.acted).toEqual(["A"]);
   expect(table.round!.currentTurnId).toBe("B");
   expect(table.round!.turnToken).toBe(1);
   expect(table.round!.lastSwapReceiverId).toBeUndefined();
+  // ROUND-LOSS FIX: a mid-pass keep persists the advanced round too (phase stays turns).
+  expect(host.persisted).toEqual([{ phase: "turns", phaseToken: table.phaseToken }]);
 });
 
 test("handleSwap: King-no-read — swapping onto a King (rank 13) is NOT refused (FR-8/AC-2.4.6)", async () => {
   const table = turnsTable({ A: { rank: 5, suit: "♠" }, B: { rank: 13, suit: "♥" }, C: { rank: 1, suit: "♦" } });
-  const host = hostWith(table);
+  const host = hostWithStorage(table);
   await expect(handleSwap(host, swapIntent(0), "A")).resolves.toBeUndefined();
   expect(table.round!.hands.A).toEqual({ rank: 13, suit: "♥" }); // A receives the King — no refusal
 });
@@ -293,14 +299,20 @@ test("handleKeep by the LAST seat completes the pass → allActed + phaseToken b
   expect(host.persisted).toEqual([{ phase: "allActed", phaseToken: phaseTokenBefore + 1 }]);
 });
 
-test("handleSwap MID-pass (not the last seat) stays turns + does NOT persist (the 2.4 regression contract)", async () => {
-  // A is the first to act (B, C still owe a turn) → the pass is NOT complete; behavior is the 2.4 path.
+test("handleSwap MID-pass (not the last seat) stays turns but PERSISTS the advanced round (round-loss fix)", async () => {
+  // A is the first to act (B, C still owe a turn) → the pass is NOT complete (phase stays turns). The
+  // ROUND-LOSS FIX (2026-06-26) reverses the old "mid-pass does NOT persist" contract: the round is now
+  // part of the durable summary, so every accepted turn action persists the advanced round — otherwise a
+  // mid-pass DO eviction coerces turns→roundResult and the next player's intent is rejected (the deployed
+  // "B can't swap" bug). The phase still stays `turns` (the pass did not complete).
   const host = hostWithStorage(
     turnsTable({ A: { rank: 2, suit: "♠" }, B: { rank: 7, suit: "♥" }, C: { rank: 10, suit: "♦" } }),
   );
   const table = host.table!;
+  const phaseTokenBefore = table.phaseToken;
   await handleSwap(host, swapIntent(0), "A");
-  expect(table.phase).toBe("turns"); // unchanged mid-pass
+  expect(table.phase).toBe("turns"); // unchanged mid-pass (pass not complete)
   expect(table.round!.currentTurnId).toBe("B"); // turn advances normally (NOT cleared)
-  expect(host.persisted).toEqual([]); // NO persist mid-pass (memory-only round change)
+  expect(table.phaseToken).toBe(phaseTokenBefore); // mid-pass does NOT bump the phase token
+  expect(host.persisted).toEqual([{ phase: "turns", phaseToken: phaseTokenBefore }]); // DOES persist now
 });

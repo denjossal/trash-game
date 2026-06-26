@@ -172,15 +172,17 @@ test("AC-2.3.1: a double-tapped (stale-token) deal is rejected with stale-phase;
   host.send({ type: "deal", payload: { phaseToken: 0 } });
   expect(await nextErrorReason(host)).toBe("stale-phase");
 
-  // The durable summary is unchanged by the rejected double-tap: still phase:"turns", token 1, round
-  // never persisted.
+  // The durable summary is unchanged by the rejected double-tap: still phase:"turns", token 1. The round
+  // IS persisted now (round-loss fix, 2026-06-26) — the first deal wrote it, and the rejected second deal
+  // left it intact (one dealt round, currentTurnId on the starting player).
   const stub = env.Table.get(env.Table.idFromName("DBL2"));
   const persisted = await runInDurableObject(stub, async (_instance, state) =>
     state.storage.get<Record<string, unknown>>("table"),
   );
   expect(persisted?.phase).toBe("turns");
   expect(persisted?.phaseToken).toBe(1);
-  expect("round" in (persisted ?? {})).toBe(false); // round is memory-only (AC-2.2.5)
+  expect("round" in (persisted ?? {})).toBe(true); // round is now durable (survives mid-round eviction)
+  expect((persisted?.round as Record<string, unknown> | undefined)?.turnToken).toBe(0); // fresh round
 
   host.close();
 });

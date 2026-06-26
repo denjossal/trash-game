@@ -14,6 +14,16 @@
 import { SELF, env, runInDurableObject } from "cloudflare:test";
 import { expect, test } from "vitest";
 
+type StoredRound = {
+  startingPlayerId: string;
+  currentTurnId: string;
+  turnToken: number;
+  hands: Record<string, { rank: number; suit: string }>;
+  deck: { rank: number; suit: string }[];
+  acted: string[];
+  revealed: boolean;
+};
+
 type StoredSummary = {
   code: string;
   phase: string;
@@ -21,6 +31,7 @@ type StoredSummary = {
   startingLives: number;
   players: { id: string; name: string; lives: number; isAlive: boolean; seatIndex: number }[];
   phaseToken: number;
+  round?: StoredRound;
 };
 
 const liveRoundSummary = (code: string, phaseToken: number): StoredSummary => ({
@@ -60,9 +71,47 @@ async function readPersisted(code: string): Promise<StoredSummary | undefined> {
   return runInDurableObject(stub, async (_instance, state) => state.storage.get<StoredSummary>("table"));
 }
 
-test("AC-2.2.6: waking on a lost live round coerces to roundResult, bumps phaseToken, and RE-PERSISTS it", async () => {
-  // Seed a summary implying a live round (phase "turns", token 5). The round object is never persisted,
-  // so on wake `round === null` while phase says "turns": the D2.1 coercion case.
+test("ROUND-LOSS FIX: waking on a live round WITH a persisted round RESTORES it (no coercion, no bump)", async () => {
+  // The real fix for the deployed "B can't swap" bug: a `turns` summary that ALSO carries the round must
+  // survive the wake — the DO continues the game instead of coercing the round away. Seed two players,
+  // mid-pass (A acted, it is B's turn, token 1), and a persisted round.
+  await seedSummary("RLDFIX", {
+    code: "RLDFIX",
+    phase: "turns",
+    hostId: "host-1",
+    startingLives: 3,
+    players: [
+      { id: "host-1", name: "A", lives: 3, isAlive: true, seatIndex: 0 },
+      { id: "guest-1", name: "B", lives: 3, isAlive: true, seatIndex: 1 },
+    ],
+    phaseToken: 1,
+    round: {
+      startingPlayerId: "host-1",
+      currentTurnId: "guest-1", // B's turn (A already acted)
+      turnToken: 1,
+      hands: { "host-1": { rank: 5, suit: "♠" }, "guest-1": { rank: 9, suit: "♥" } },
+      deck: [{ rank: 2, suit: "♦" }],
+      acted: ["host-1"],
+      revealed: false,
+    },
+  });
+
+  await wakeDurableObject("RLDFIX");
+
+  // The durable "table" key is UNCHANGED: still phase "turns", token 1, and the round is intact with B
+  // on turn — the round was restored, NOT coerced away. (Pre-fix this woke as roundResult with no round.)
+  const persisted = await readPersisted("RLDFIX");
+  expect(persisted?.phase).toBe("turns");
+  expect(persisted?.phaseToken).toBe(1);
+  expect(persisted?.round).toBeDefined();
+  expect(persisted?.round?.currentTurnId).toBe("guest-1");
+  expect(persisted?.round?.turnToken).toBe(1);
+  expect(persisted?.round?.acted).toEqual(["host-1"]);
+});
+
+test("AC-2.2.6: waking on a lost live round (NO persisted round) coerces to roundResult, bumps token, RE-PERSISTS", async () => {
+  // The legacy/crash fallback: a live-round phase WITHOUT a persisted round (e.g. a summary written
+  // before the round-loss fix, or a crash mid-deal) still coerces to the safe between-rounds surface.
   await seedSummary("RLD1", liveRoundSummary("RLD1", 5));
 
   await wakeDurableObject("RLD1");

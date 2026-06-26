@@ -555,8 +555,9 @@ export async function handleDeal(
   // adjacent to the checkPhaseToken above so guard+advance reads as one unit. ---
   bumpPhaseToken(table);
 
-  // --- PERSIST: the durable summary now carries phase:"turns" + the bumped token; `round` is dropped
-  // by toSummary (memory-only, AC-2.2.5). The fan-out (per-device projection) is dispatch's job. ---
+  // --- PERSIST: the durable summary carries phase:"turns" + the bumped token + the in-flight round
+  // (round-loss fix — toSummary now includes round, so a mid-round eviction restores it instead of
+  // coercing it away). The fan-out (per-device projection) is dispatch's job. ---
   await persistSummary(host.storage, table);
 }
 
@@ -942,18 +943,20 @@ function maybeCompletePass(state: TableState, round: Round): boolean {
 }
 
 /**
- * The shared accepted-turn TAIL for all three turn handlers: run {@link maybeCompletePass}, and — ONLY if
- * it made the `turns → allActed` transition — persist the (now-changed) durable summary. Folding the
- * persist INTO this step (rather than leaving a `if (maybeCompletePass(...)) await persistSummary(...)`
- * couplet at each call site) keeps the "transition happened ⇒ must persist" coupling in one place, so a
- * new turn handler cannot wire up the completion check while forgetting the durable write (deferred-work
- * #117 — the bare-mutator-coupling class). Mid-pass it makes no transition and skips persist (the 2.4
- * memory-only path: only `round` changed, phase stays `turns`).
+ * The shared accepted-turn TAIL for all three turn handlers: run {@link maybeCompletePass}, then persist.
+ *
+ * PERSIST IS NOW UNCONDITIONAL (round-loss fix, 2026-06-26). Previously a mid-pass action skipped persist
+ * because it changed ONLY the memory-only `round` — but that is exactly why an active round did not
+ * survive a mid-pass DO eviction: the durable summary never carried the round's progress, so a wake
+ * coerced `turns`→`roundResult` and the next player's intent was rejected (the deployed-only "B can't
+ * swap"). Now that the summary INCLUDES the round (toSummary), every accepted turn action MUST persist so
+ * the advanced `currentTurnId`/`turnToken`/`hands`/`acted` are durable and an eviction restores the exact
+ * round. Folding the persist into this one tail keeps the "action accepted ⇒ durable write" coupling in a
+ * single place so a new turn handler cannot forget it (deferred-work #117).
  */
 async function completePassAndPersistIfDone(host: TableHost, round: Round): Promise<void> {
-  if (maybeCompletePass(host.table!, round)) {
-    await persistSummary(host.storage, host.table!);
-  }
+  maybeCompletePass(host.table!, round); // may transition turns → allActed; either way we persist below.
+  await persistSummary(host.storage, host.table!);
 }
 
 /**
@@ -961,15 +964,14 @@ async function completePassAndPersistIfDone(host: TableHost, round: Round): Prom
  * The SECOND gameplay handler and the FIRST consumer of the TURN scope (handleDeal was the first PHASE
  * consumer). Runs the shared turn-scoped pre-check (requireActiveTurn), then:
  *   mutate (applySwap — unconditional exchange + advance turn right + set the value-free squirm
- *   transient) → bumpTurnToken → [NO persist] → [dispatch] fanOut
+ *   transient) → bumpTurnToken → persist (round-loss fix) → [dispatch] fanOut
  *
- * PERSIST IS CONDITIONAL (Story 2.6): a MID-pass swap changes ONLY memory-only `round` fields (`hands`,
- * `acted`, `currentTurnId`, `turnToken`, `lastSwapReceiverId`); the durable summary (code/phase/hostId/
- * startingLives/players[]/phaseToken) is UNCHANGED (phase stays `turns`), so it does NOT persist — the
- * 2.4 memory-only precedent (same as markDisconnected; consistent with AC-2.2.5). BUT when the LAST seat
- * swaps, the one pass completes → `maybeCompletePass` enters `allActed` + bumps the phase token (both
- * DURABLE), so the handler MUST persist. The conditional is centralized in `maybeCompletePass`'s return.
- * [Source: architecture round-trip step 4 "persistSummaryIfPhaseChanged"; persistence.ts toSummary drops round.]
+ * PERSIST IS UNCONDITIONAL (round-loss fix, 2026-06-26): the durable summary now CARRIES the in-flight
+ * round (toSummary), so every accepted swap — mid-pass too — persists the advanced `currentTurnId`/
+ * `turnToken`/`hands`/`acted`. Previously a mid-pass swap skipped persist (round was memory-only), which
+ * is why an active round did not survive a mid-pass DO eviction: the wake coerced `turns`→`roundResult`
+ * and the next player's intent was rejected. The persist (and the LAST-seat `turns→allActed` transition)
+ * are centralized in completePassAndPersistIfDone. [Source: persistence.ts toSummary now includes round.]
  *
  * SM-6 / FR-8 (AC-2.4.6): applySwap does CONSTANT work regardless of the cards' ranks (a plain field
  * exchange) — no value-dependent branch, so the response is timing-indistinguishable by card value
@@ -987,9 +989,8 @@ export async function handleSwap(
   // value-free squirm transient (round.lastSwapReceiverId) the projector turns into justReceivedSwap.
   applySwap(round, callerPlayerId as string, host.table!.players);
   bumpTurnToken(round); // accepted-path advance — next stale turn-scoped copy mismatches.
-  // If this was the LAST seat's action, the one pass is complete → enter `allActed` (Story 2.6) and
-  // persist (the durable phase + phaseToken changed). MID-pass: NO persist (the 2.4 memory-only path:
-  // only `round` changed, phase stays `turns`). [See completePassAndPersistIfDone / maybeCompletePass.]
+  // Persist the advanced round (round-loss fix) and, if this was the LAST seat, complete the pass →
+  // `allActed`. Both are centralized in the shared tail. [See completePassAndPersistIfDone.]
   await completePassAndPersistIfDone(host, round);
 }
 
@@ -1007,7 +1008,8 @@ export async function handleKeep(
   const round = requireActiveTurn(host, intent, callerPlayerId);
   applyKeep(round, callerPlayerId as string, host.table!.players);
   bumpTurnToken(round);
-  // Last-seat action completes the pass → allActed + persist; mid-pass → no persist. See handleSwap JSDoc.
+  // Persist the advanced round (round-loss fix); last-seat action also completes the pass → allActed.
+  // See handleSwap JSDoc / completePassAndPersistIfDone.
   await completePassAndPersistIfDone(host, round);
 }
 

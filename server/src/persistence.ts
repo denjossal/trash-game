@@ -6,7 +6,7 @@
 // reconcile seam. The DURABLE SUMMARY is the subset { code, phase, hostId, startingLives,
 // players[{id,name,lives,isAlive,seatIndex}], phaseToken } — the in-flight `round` is MEMORY-ONLY and
 // never persisted (it is null at create anyway). [Source: architecture.md D2 lines 346–355; spike AC2.]
-import type { Phase, Player, TableState } from "@trash/shared";
+import type { Phase, Player, Round, TableState } from "@trash/shared";
 
 /** The single ctx.storage key (D2). One blob, never per-field keys. */
 export const TABLE_KEY = "table";
@@ -36,6 +36,14 @@ export type DurableSummary = {
   loserIds?: string[];
   winnerIds?: string[];
   nextStartingPlayerId?: string;
+  // IN-FLIGHT ROUND (round-loss fix, 2026-06-26): the live `round` is now persisted so an active round
+  // SURVIVES a Durable Object hibernation/eviction mid-pass. Previously memory-only — a DO that evicted
+  // between turns woke with `round` gone and coerced `turns`→`roundResult`, silently killing the round
+  // (the deployed-only "B can't swap" bug: wrangler dev rarely hibernates, the edge does). This stays
+  // SERVER-ONLY: ctx.storage never crosses the wire, and the projection chokepoint (project-state.ts) is
+  // unchanged, so SM-6 holds — a persisted hand is no more exposed than the in-memory one. Omit-when-
+  // absent (only set while a round is live). [Source: architecture.md D2/D2.1 — reverses "round memory-only".]
+  round?: Round;
 };
 
 /** Project a TableState down to its durable summary (drops `round` and `isConnected`). */
@@ -60,6 +68,9 @@ export function toSummary(state: TableState): DurableSummary {
   if (state.loserIds) summary.loserIds = state.loserIds;
   if (state.winnerIds) summary.winnerIds = state.winnerIds;
   if (state.nextStartingPlayerId) summary.nextStartingPlayerId = state.nextStartingPlayerId;
+  // Persist the in-flight round when present (round-loss fix) so a mid-pass eviction can restore it
+  // instead of coercing the round away. Null in lobby / between rounds — omit-when-absent.
+  if (state.round) summary.round = state.round;
   return summary;
 }
 
@@ -73,9 +84,10 @@ export async function loadSummary(storage: DurableObjectStorage): Promise<Durabl
   return storage.get<DurableSummary>(TABLE_KEY);
 }
 
-// Live-round phases: a persisted phase in this set with a memory `round` of null means the DO woke
-// after losing the in-flight round (eviction/crash) — D2.1 says coerce to the safe between-rounds
-// surface before the first projection. [Source: architecture.md D2.1 lines 359–362.]
+// Live-round phases: a persisted phase in this set whose `round` is ALSO missing means the DO woke after
+// losing the in-flight round (a legacy summary, or a crash before the round was persisted) — coerce to
+// the safe between-rounds surface before the first projection. With the round-loss fix the round is now
+// persisted, so a normal mid-round wake restores it and does NOT coerce. [Source: architecture.md D2.1.]
 const LIVE_ROUND_PHASES: ReadonlySet<Phase> = new Set<Phase>(["dealing", "turns", "allActed", "showdown"]);
 
 /**
@@ -89,9 +101,10 @@ export type ReconcileResult = { state: TableState; coerced: boolean };
 
 /**
  * D2.1 reload-reconciliation (REQUIRED seam). On DO wake, rebuild the in-memory TableState from the
- * persisted summary; if the persisted phase is a live-round phase but the round is gone (always, since
- * round is never persisted), coerce phase → "roundResult" and bump phaseToken BEFORE the first
- * projection. The Host can then dealAgain. The reconstructed TableState always has `round: null`.
+ * persisted summary. The in-flight round is now persisted (round-loss fix), so a normal mid-round wake
+ * RESTORES it and the game continues. ONLY when a live-round phase woke with the round genuinely missing
+ * (legacy summary / crash before the round was persisted) do we coerce phase → "roundResult" and bump
+ * phaseToken BEFORE the first projection, so the Host can dealAgain.
  *
  * Returns `{ state, coerced }` so the single source of the coercion DECISION is here (the caller never
  * re-derives "did the phase change?"): `onStart` re-persists the durable summary IFF `coerced === true`.
@@ -101,7 +114,12 @@ export type ReconcileResult = { state: TableState; coerced: boolean };
  * path and is exercised there. [Source: spike AC2/D2.1; architecture.md D2.1 359–363.]
  */
 export function reconcileSummaryToState(summary: DurableSummary): ReconcileResult {
-  const coerced = LIVE_ROUND_PHASES.has(summary.phase);
+  // Coerce ONLY when a live-round phase woke WITHOUT its round (the round-loss fix persists the round, so
+  // the normal mid-round wake now restores it and does NOT coerce). The fallback still fires for a legacy
+  // summary written before this fix, or a crash between the phase-transition persist and a round persist
+  // (e.g. mid-deal) — there the round really is gone, so coerce to the safe between-rounds surface.
+  const liveRound = LIVE_ROUND_PHASES.has(summary.phase);
+  const coerced = liveRound && summary.round === undefined;
   const players: Player[] = summary.players.map((p) => ({ ...p, isConnected: false }));
   const state: TableState = {
     code: summary.code,
@@ -109,7 +127,9 @@ export function reconcileSummaryToState(summary: DurableSummary): ReconcileResul
     hostId: summary.hostId,
     startingLives: summary.startingLives,
     players,
-    round: null, // round is memory-only — never restored from the summary.
+    // Restore the persisted in-flight round (round-loss fix). Absent → null (lobby/between-rounds, or a
+    // coerced wake where the round was genuinely lost).
+    round: summary.round ?? null,
     phaseToken: coerced ? summary.phaseToken + 1 : summary.phaseToken,
   };
   // Restore the between-round result (Story 3.4) when it was persisted (a roundResult/gameOver wake) so

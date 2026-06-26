@@ -3,11 +3,13 @@
 // re-persist behavior is exercised in table-server-reload.do.test.ts.
 //
 // What these tests pin:
-//   - toSummary drops the entire `round` object AND `isConnected` (AC-2.2.5 durable field boundary).
-//   - reconcileSummaryToState coerces a live-round phase → roundResult, bumps phaseToken+1, nulls
-//     round, seeds isConnected:false, and reports `coerced: true`; a non-live phase is left untouched
-//     and reports `coerced: false` (AC-2.2.6 — the signal onStart uses to re-persist exactly once).
-// [Source: architecture.md#D2 346–358, #D2.1 359–363; story Tasks 3, 4, 6.]
+//   - toSummary now PERSISTS the in-flight `round` (round-loss fix, 2026-06-26) and still drops
+//     `isConnected` (ephemeral). The round nests under `round` (server-only storage; SM-6 unchanged).
+//   - reconcileSummaryToState RESTORES the persisted round on a live-round wake (coerced: false), and
+//     ONLY coerces → roundResult (bump phaseToken+1, round:null, coerced:true) when a live-round phase
+//     woke WITHOUT its round (legacy summary / crash before the round was persisted). A non-live phase is
+//     left untouched (coerced: false) — AC-2.2.6, the signal onStart uses to re-persist exactly once.
+// [Source: architecture.md#D2 346–358, #D2.1 359–363 (round now persisted); story Tasks 3, 4, 6.]
 import { expect, test } from "vitest";
 import type { Phase, TableState } from "@trash/shared";
 import { type DurableSummary, reconcileSummaryToState, toSummary } from "./persistence.js";
@@ -46,15 +48,29 @@ function liveState(): TableState {
 
 // ---- toSummary: the AC-2.2.5 durable field boundary ------------------------
 
-test("toSummary: persisted blob EXCLUDES the entire round object (memory-only)", () => {
+test("toSummary: PERSISTS the in-flight round (round-loss fix) so a mid-round eviction can restore it", () => {
+  // ROUND-LOSS FIX (2026-06-26): the round is now part of the durable summary so an active round survives
+  // a DO hibernation/eviction mid-pass (previously memory-only → coerced away on wake → the deployed
+  // "B can't swap" bug). ctx.storage never crosses the wire, so SM-6 still holds (the projection
+  // chokepoint is unchanged) — a persisted hand is no more exposed than the in-memory one.
   const blob = toSummary(liveState()) as Record<string, unknown>;
-  expect(blob.round).toBeUndefined();
-  // None of round's fields leak onto the top level either.
+  expect(blob.round).toBeDefined();
+  const round = blob.round as Record<string, unknown>;
+  expect(round.currentTurnId).toBe("p1");
+  expect(round.turnToken).toBe(9);
+  expect(round.acted).toEqual(["p1"]);
+  // Round fields nest under `round` — they do NOT leak onto the top level.
   for (const k of ["hands", "deck", "turnToken", "currentTurnId", "acted", "revealed", "startingPlayerId"]) {
     expect(blob[k]).toBeUndefined();
   }
-  // No card data anywhere in the serialized summary (belt-and-suspenders for SM-6 at the storage seam).
-  expect(JSON.stringify(blob)).not.toContain("rank");
+});
+
+test("toSummary: OMITS round when there is none (lobby / between rounds — omit-when-absent)", () => {
+  const state = liveState();
+  state.phase = "lobby";
+  state.round = null;
+  const blob = toSummary(state) as Record<string, unknown>;
+  expect("round" in blob).toBe(false);
 });
 
 test("toSummary: persisted players OMIT isConnected (ephemeral presence is not durable)", () => {
@@ -79,14 +95,42 @@ test("toSummary: carries the durable summary fields verbatim", () => {
 const LIVE_ROUND_PHASES: Phase[] = ["dealing", "turns", "allActed", "showdown"];
 const SAFE_PHASES: Phase[] = ["lobby", "roundResult", "gameOver"];
 
+// A persisted live round to attach when testing the RESTORE path.
+function persistedRound(): DurableSummary["round"] {
+  return {
+    startingPlayerId: "p1",
+    currentTurnId: "p1",
+    turnToken: 9,
+    hands: { p1: { rank: 5, suit: "♠" } },
+    deck: [{ rank: 1, suit: "♥" }],
+    acted: ["p1"],
+    revealed: false,
+  };
+}
+
 for (const phase of LIVE_ROUND_PHASES) {
-  test(`reconcile: live-round phase "${phase}" coerces → roundResult, bumps phaseToken+1, reports coerced`, () => {
+  test(`reconcile: live-round phase "${phase}" WITH a persisted round RESTORES it (no coercion)`, () => {
+    // ROUND-LOSS FIX: the normal mid-round wake now finds the persisted round and continues the game —
+    // it does NOT coerce to roundResult or bump the phaseToken.
+    const { state, coerced } = reconcileSummaryToState(summary({ phase, phaseToken: 5, round: persistedRound() }));
+    expect(coerced).toBe(false);
+    expect(state.phase).toBe(phase); // unchanged — the round survived
+    expect(state.phaseToken).toBe(5); // not bumped
+    expect(state.round).not.toBeNull();
+    expect(state.round!.currentTurnId).toBe("p1");
+    expect(state.round!.turnToken).toBe(9);
+    expect(state.players[0].isConnected).toBe(false); // presence re-asserted by a live socket later
+  });
+
+  test(`reconcile: live-round phase "${phase}" WITHOUT a round coerces → roundResult (legacy/crash fallback)`, () => {
+    // The fallback still fires for a legacy summary (written before the fix) or a crash before the round
+    // was persisted: the round is genuinely gone, so coerce to the safe between-rounds surface.
     const { state, coerced } = reconcileSummaryToState(summary({ phase, phaseToken: 5 }));
     expect(coerced).toBe(true);
     expect(state.phase).toBe("roundResult");
     expect(state.phaseToken).toBe(6); // bumped before the first projection
-    expect(state.round).toBeNull(); // round is never restored
-    expect(state.players[0].isConnected).toBe(false); // presence re-asserted by a live socket later
+    expect(state.round).toBeNull();
+    expect(state.players[0].isConnected).toBe(false);
   });
 }
 
