@@ -36,6 +36,13 @@ export type Copy = {
   // App-frame.
   APP_NAME: string;
   CONNECTING: string;
+  // Language toggle (Story 7.2, UX-DR19). LANGUAGE_LABEL is the control's accessible name; the per-
+  // language NAMEs label each option. Each language's own name reads the SAME in every table (an
+  // endonym — "Español" is "Español" whether the UI is currently English or Spanish), so a Player can
+  // always recognise their language; only LANGUAGE_LABEL localizes.
+  LANGUAGE_LABEL: string;
+  LANG_NAME_EN: string;
+  LANG_NAME_ES: string;
   // Home (Story 1.10, UX-DR3).
   START_TABLE: string;
   JOIN_TABLE: string;
@@ -106,6 +113,9 @@ export type ParamKey = Exclude<keyof Copy, PlainKey>;
 const en: Copy = {
   APP_NAME: "Trash",
   CONNECTING: "Connecting…",
+  LANGUAGE_LABEL: "Language",
+  LANG_NAME_EN: "English",
+  LANG_NAME_ES: "Español",
   START_TABLE: "Start a table",
   JOIN_TABLE: "Join a table",
   BAD_CODE: "No table with that code — check the letters?",

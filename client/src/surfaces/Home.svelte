@@ -9,6 +9,7 @@
   // GATE-1 bans .send outside socket.ts/push-state.ts). Primary actions sit in the lower thumb-zone.
   import { ROOM_CODE_ALPHABET, ROOM_CODE_LEN } from "@trash/shared";
   import Button from "../components/Button.svelte";
+  import LanguageToggle from "../components/LanguageToggle.svelte";
   import { t } from "../lib/i18n.svelte";
   import { MAX_NAME_LEN } from "../lib/interaction";
   import { joinTable, startTable } from "../lib/table-store.svelte";
@@ -96,7 +97,13 @@
 </script>
 
 <main class="surface">
-  <h1>{t("APP_NAME")}</h1>
+  <!-- Title + the quiet, one-time language choice. The toggle sits at the TOP, BEFORE the Room Code
+       entry (Story 7.2): a Spanish-speaking relative picks their language the moment they open the app,
+       off the clock. Per-device only — never a Host/Table control. -->
+  <header class="head">
+    <h1>{t("APP_NAME")}</h1>
+    <LanguageToggle />
+  </header>
 
   {#if mode === "choose"}
     <div class="actions">
@@ -162,13 +169,21 @@
     text-align: center;
     box-sizing: border-box;
   }
+  /* Title + language toggle, stacked at the top (the toggle is the first thing, before the Room Code). */
+  .head {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-stack-md);
+    margin-top: var(--space-stack-xl);
+  }
   h1 {
     font-family: var(--font-family-display);
     font-size: var(--type-display-lg-size);
     font-weight: var(--type-display-lg-weight);
     line-height: var(--type-display-lg-line);
     letter-spacing: var(--type-display-lg-tracking);
-    margin: var(--space-stack-xl) 0 0;
+    margin: 0;
     color: var(--color-primary);
   }
   .panel,

@@ -49,6 +49,15 @@ describe("Home surface", () => {
     expect(container.textContent?.toLowerCase()).not.toContain("underground");
   });
 
+  it("(Story 7.2) renders the language toggle BEFORE the Room Code entry (reachable on the first screen)", () => {
+    render(Home);
+    // The language group is present at the cold-open "choose" step — before Join reveals the code field.
+    const group = screen.getByRole("group", { name: t("LANGUAGE_LABEL") });
+    expect(group).toBeTruthy();
+    expect(screen.queryByRole("group", { name: /room code/i })).toBeNull(); // code field not shown yet
+    expect(screen.getByRole("button", { name: t("LANG_NAME_ES") })).toBeTruthy();
+  });
+
   it("reveals the Room Code field + name entry when Join is chosen", async () => {
     render(Home);
     await fireEvent.click(screen.getByText(JOIN_TABLE));
