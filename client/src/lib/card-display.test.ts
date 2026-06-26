@@ -51,3 +51,48 @@ test("cardSpeech: rank word + suit name for the SR announce (suit is orientation
   expect(cardSpeech({ rank: 1, suit: "♥" })).toBe("Ace of hearts");
   expect(cardSpeech({ rank: 7, suit: "♦" })).toBe("7 of diamonds");
 });
+
+// --- Story 7.3: Spanish card ranks (faces + screen-reader speech), FR-19 ---
+
+test("(7.3) rankToLetter es: A=As→'A', J=Jota→'J', K=Rey→'R'; ONLY the King glyph changes from English", () => {
+  expect(rankToLetter(1, "es")).toBe("A"); // As
+  expect(rankToLetter(11, "es")).toBe("J"); // Jota
+  expect(rankToLetter(13, "es")).toBe("R"); // Rey — the one glyph that differs from English (K)
+});
+
+test("(7.3) rankToLetter es: the QUEEN glyph stays 'Q' (NOT 'R') to dodge the Reina/Rey R-collision", () => {
+  expect(rankToLetter(12, "es")).toBe("Q"); // Reina — glyph deliberately Q, not R (AC-7.3.1)
+  // and the Queen ('Q') and King ('R') glyphs are distinct in Spanish — no ambiguity.
+  expect(rankToLetter(12, "es")).not.toBe(rankToLetter(13, "es"));
+});
+
+test("(7.3) rankToLetter es: pip ranks 2..10 render their numerals unchanged", () => {
+  for (let r = 2; r <= 10; r++) expect(rankToLetter(r, "es")).toBe(String(r));
+});
+
+test("(7.3) rankSpeech es: face cards speak As / Jota / Reina / Rey (number cards in es speak the number)", () => {
+  expect(rankSpeech(1, "es")).toBe("As");
+  expect(rankSpeech(11, "es")).toBe("Jota");
+  expect(rankSpeech(12, "es")).toBe("Reina");
+  expect(rankSpeech(13, "es")).toBe("Rey");
+  expect(rankSpeech(7, "es")).toBe("7");
+});
+
+test("(7.3) the INTENTIONAL es mismatch: the Queen GLYPH is 'Q' but the SPOKEN word is 'Reina'", () => {
+  // Documented by design (AC-7.3.2): the glyph dodges the R-collision; the speech is fully Spanish.
+  expect(rankToLetter(12, "es")).toBe("Q");
+  expect(rankSpeech(12, "es")).toBe("Reina");
+});
+
+test("(7.3) cardSpeech es: rank word + 'de' + Spanish suit name (suit decorative, same glyph)", () => {
+  expect(cardSpeech({ rank: 13, suit: "♠" }, "es")).toBe("Rey de picas");
+  expect(cardSpeech({ rank: 1, suit: "♥" }, "es")).toBe("As de corazones");
+  expect(cardSpeech({ rank: 12, suit: "♦" }, "es")).toBe("Reina de diamantes");
+});
+
+test("(7.3) English is unchanged when language is omitted (Spanish is purely additive)", () => {
+  // The default-param "en" path keeps every English call site (and the MVP behaviour) identical.
+  expect(rankToLetter(13)).toBe("K");
+  expect(rankSpeech(12)).toBe("Queen");
+  expect(cardSpeech({ rank: 13, suit: "♠" })).toBe("King of spades");
+});

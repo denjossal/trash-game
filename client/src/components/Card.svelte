@@ -15,10 +15,13 @@
   // distinguished by SHAPE (the glyph) not COLOR (NFR-10 color-independence) — there is no suit→color map.
   import type { Card } from "@trash/shared";
   import { rankToLetter } from "../lib/card-display";
+  import { getLanguage } from "../lib/i18n.svelte";
 
   const { card, revealed }: { card: Card; revealed: boolean } = $props();
 
-  const letter = $derived(rankToLetter(card.rank));
+  // Reads the active device language (Story 7.3) so the face glyph is Spanish (As/Jota/Reina/Rey) when
+  // chosen — re-renders on a language switch. The rank→glyph map itself stays in card-display.ts.
+  const letter = $derived(rankToLetter(card.rank, getLanguage()));
 </script>
 
 {#if revealed}

@@ -23,14 +23,14 @@
   // verified by manual/Playwright (non-deterministic in jsdom).
   import type { Card as CardType } from "@trash/shared";
   import { cardSpeech } from "../lib/card-display";
-  import { t } from "../lib/i18n.svelte";
+  import { getLanguage, t } from "../lib/i18n.svelte";
   import Card from "./Card.svelte";
 
   const { card }: { card: CardType } = $props();
 
   // Local UI-only peek state — NEVER sent to the server. `revealed` is the SOLE source of truth.
   let revealed = $state(false);
-  const announcement = $derived(revealed ? cardSpeech(card) : "");
+  const announcement = $derived(revealed ? cardSpeech(card, getLanguage()) : "");
 
   function reveal(): void {
     revealed = true;
