@@ -91,11 +91,11 @@ export interface DealtTable {
 }
 
 /**
- * Create a room (aux host), join the browser as player 2 over the real UI, deal, and advance the Host's
- * turn so the browser lands on YourTurn (heads-up: player 2 is the Last Player). Returns once the page
- * is showing the YourTurn surface with the peek control present.
+ * Create a room (aux host), join the browser as player 2 over the real UI, and DEAL — stopping while the
+ * Host (player 0 / Starting Player) is on turn, so the browser is on the WAITING surface (it is NOT yet
+ * player 2's turn). Returns once the page shows Waiting with the off-turn peek control present.
  */
-export async function driveBrowserToYourTurn(page: Page, name = "E2E"): Promise<DealtTable> {
+export async function driveBrowserToWaiting(page: Page, name = "E2E"): Promise<DealtTable> {
   const code = randomCode();
 
   // 1) Aux HOST creates the room and waits for the lobby (it is player 0 / Starting Player).
@@ -125,18 +125,28 @@ export async function driveBrowserToYourTurn(page: Page, name = "E2E"): Promise<
   if (!bothSeated) throw new Error("aux host never saw player 2 join");
   host.send({ type: "deal", payload: { phaseToken: (host.last as any).phaseToken } });
 
-  // After the deal: phase "turns", Host (player 0) is the Starting Player → it is the HOST's turn, not
-  // the browser's. The browser shows Waiting. The aux host KEEPS to pass the turn right to player 2.
+  // After the deal: phase "turns", Host (player 0) is the Starting Player → it is the HOST's turn. The
+  // browser (player 2) is on WAITING. The off-turn peek (Story 6.1) renders here on the real surface.
   const dealt = await host.waitFor(() => (host.last as any)?.phase === "turns" && typeof (host.last as any)?.turnToken === "number");
   if (!dealt) throw new Error("deal did not advance the round to `turns`");
-  host.send({ type: "keep", payload: { turnToken: (host.last as any).turnToken } });
-
-  // 4) The turn passed right → the browser (player 2 / Last Player) is now active → YourTurn surface.
-  //    Assert via the real client DOM: the peek control + the SWAP/KEEP hero are present.
   await expect(page.getByRole("button", { name: /peek/i })).toBeVisible({ timeout: 15_000 });
 
-  // The browser's projection turnToken (the value its own intents would carry). Read it off the host's
-  // mirror of the round (turnToken is round-scoped, shared) for callers that drive a draw/swap next.
+  const turnToken = ((host.last as any)?.turnToken as number) ?? 0;
+  return { code, host, turnToken };
+}
+
+/**
+ * As driveBrowserToWaiting, but then advance the Host's turn (aux host KEEPS) so the turn passes right to
+ * player 2 (heads-up: the Last Player) and the browser lands on YourTurn with the peek + SWAP/KEEP hero.
+ */
+export async function driveBrowserToYourTurn(page: Page, name = "E2E"): Promise<DealtTable> {
+  const { code, host } = await driveBrowserToWaiting(page, name);
+
+  // The aux host KEEPS to pass the turn right to player 2 → the browser routes to YourTurn.
+  host.send({ type: "keep", payload: { turnToken: (host.last as any).turnToken } });
+  await expect(page.getByRole("button", { name: /peek/i })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: /^keep$/i })).toBeVisible({ timeout: 15_000 });
+
   const turnToken = ((host.last as any)?.turnToken as number) ?? 0;
   return { code, host, turnToken };
 }
